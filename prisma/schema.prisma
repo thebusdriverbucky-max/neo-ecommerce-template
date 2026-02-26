@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  password      String?
+  role          UserRole  @default(CUSTOMER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  resetToken       String?
+  resetTokenExpiry DateTime?
+
+  accounts       Account[]
+  sessions       Session[]
+  orders         Order[]
+  addresses      Address[]
+  reviews        Review[]
+  wishlists  Wishlist[]
+
+  @@index([email])
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?
+  access_token       String?
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  sessionToken String @unique
+  userId    String
+  expires   DateTime
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@index([token])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String
+  price       Decimal  @db.Decimal(10, 2)
+  image       String
+  category    String
+  stock       Int      @default(0)
+  rating      Decimal  @default(0) @db.Decimal(3, 2)
+  featured    Boolean  @default(false)
+  isArchived  Boolean  @default(false)
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems OrderItem[]
+  reviews    Review[]
+  wishlists      Wishlist[]
+  inventoryAlert InventoryAlert?
+
+  @@index([category])
+  @@index([featured])
+}
+
+model Cart {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  items     Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guestEmail    String?
+  items         OrderItem[]
+  status        OrderStatus @default(PENDING)
+  subtotal      Decimal     @db.Decimal(10, 2)
+  tax           Decimal     @db.Decimal(10, 2)
+  total         Decimal     @db.Decimal(10, 2)
+  shippingCost  Decimal     @db.Decimal(10, 2)
+  currency      String      @default("USD")
+  
+  orderNumber   String?     @unique
+  trackingNumber String?
+
+  stripePaymentIntentId String?
+  
+  shippingAddressId String?
+  shippingAddress   Address?  @relation("shipping", fields: [shippingAddressId], references: [id])
+  
+  billingAddressId String?
+  billingAddress   Address?  @relation("billing", fields: [billingAddressId], references: [id])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Decimal @db.Decimal(10, 2)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Address {
+  id           String  @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  firstName    String
+  lastName     String
+  email        String
+  phone        String
+  street       String
+  city         String
+  state        String
+  postalCode   String
+  country      String
+  isDefault    Boolean @default(false)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  shippingOrders Order[] @relation("shipping")
+  billingOrders  Order[] @relation("billing")
+
+  @@index([userId])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int      @db.SmallInt
+  title     String?
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, userId])
+  @@index([productId])
+  @@index([userId])
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+model DiscountCode {
+  id        String       @id @default(cuid())
+  code      String       @unique
+  type      DiscountType
+  value     Float
+  expiresAt DateTime?
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+model Wishlist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@index([productId])
+}
+
+model Coupon {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  description String?
+  type        String   @default("percent")
+  value       Decimal  @db.Decimal(10, 2)
+  minAmount   Decimal  @default(0) @db.Decimal(10, 2)
+  maxDiscount Decimal? @db.Decimal(10, 2)
+  usageLimit  Int?
+  used        Int      @default(0)
+  expiresAt   DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model InventoryAlert {
+  id          String   @id @default(cuid())
+  productId   String   @unique
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  threshold   Int      @default(5)
+  lastAlertAt DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model StoreSettings {
+  id               String   @id @default(cuid())
+  storeName        String?
+  storeEmail       String?
+  currency         String   @default("USD")
+  taxRate           Float    @default(0)
+  shippingCost      Float    @default(0)
+  freeShippingThreshold Float @default(500)
+  enabledCountries  String[]
+  enabledCategories String[]
+  tiktokUrl         String?
+  facebookUrl      String?
+  instagramUrl     String?
+  heroTitle        String?
+  heroSubtitle     String?
+  heroButtonText   String?
+  ctaTitle         String?
+  ctaSubtitle      String?
+  ctaButtonText    String?
+  footerCopyright  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ContentPage {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  content   String   @db.Text
+  isVisible Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
