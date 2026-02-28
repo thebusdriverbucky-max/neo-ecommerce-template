@@ -1,8 +1,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { stripe } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
-import { sendLowStockAlert } from "@/lib/email";
+import { sendLowStockAlert, sendOrderConfirmationEmail } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createOrderSchema } from "@/lib/validations";
 import { generateOrderNumber } from "@/lib/order-number";
@@ -187,119 +186,39 @@ export async function POST(request: NextRequest) {
     };
     lowStockAlerts();
 
-    const currency = storeCurrency.toLowerCase();
-
-    // Create Stripe Session
-    let stripeTaxRateId: string | undefined;
-    if (taxRate > 0) {
-      const taxRates = await stripe.taxRates.list({ active: true });
-      const existingTaxRate = taxRates.data.find(tr => tr.percentage === taxRate);
-
-      if (existingTaxRate) {
-        stripeTaxRateId = existingTaxRate.id;
-      } else {
-        const newTaxRate = await stripe.taxRates.create({
-          display_name: 'Tax',
-          inclusive: false,
-          percentage: taxRate,
-        });
-        stripeTaxRateId = newTaxRate.id;
-      }
-    }
-
-    const line_items = orderItemsData.map((item) => {
-      const product = products.find((p) => p.id === item.productId);
-      return {
-        price_data: {
-          currency: currency,
-          product_data: {
-            name: product?.name || "Product",
-            images: product?.image ? [product.image] : [],
-          },
-          unit_amount: Math.round(Number(item.price) * 100),
-        },
-        quantity: item.quantity,
-        tax_rates: stripeTaxRateId ? [stripeTaxRateId] : undefined,
-      };
-    });
-
-    let stripeDiscounts = undefined;
-    if (discountAmount > 0) {
+    // Send order confirmation email
+    const emailTo = userId ? session?.user?.email : guestEmail;
+    if (emailTo) {
       try {
-        const coupon = await stripe.coupons.create({
-          amount_off: Math.round(discountAmount * 100),
-          currency: currency,
-          duration: 'once',
-          name: discountCode,
+        const itemsForEmail = products.map(p => {
+          const item = items.find((i: any) => i.productId === p.id);
+          return {
+            name: p.name,
+            qty: item?.quantity || 0,
+            price: Number(p.price)
+          };
         });
-        stripeDiscounts = [{ coupon: coupon.id }];
-      } catch (error) {
-        console.error("Stripe coupon creation failed:", error);
-        // Continue without discount if coupon creation fails
+
+        await sendOrderConfirmationEmail(emailTo, {
+          orderNumber: order.orderNumber || order.id,
+          orderId: order.id,
+          total: finalTotal,
+          subtotal: subtotal,
+          tax: tax,
+          shippingCost: shipping,
+          items: itemsForEmail,
+          currency: storeCurrency,
+          paymentIban: storeSettings?.paymentIban,
+          paymentBankName: storeSettings?.paymentBankName,
+          paymentAccountName: storeSettings?.paymentAccountName,
+          paymentDetails: storeSettings?.paymentDetails,
+        });
+      } catch (emailErr) {
+        console.error("Failed to send confirmation email:", emailErr);
       }
     }
 
-    let stripeSession;
-    try {
-      stripeSession = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        line_items,
-        mode: "payment",
-        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/orders/${order.id}?success=true`,
-        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout?canceled=true`,
-        metadata: {
-          orderId: order.id,
-          ...(userId && { userId }),
-        },
-        payment_intent_data: {
-          metadata: {
-            orderId: order.id,
-            ...(userId && { userId }),
-          },
-        },
-        discounts: stripeDiscounts,
-        shipping_options: shippingCost > 0 ? [
-          {
-            shipping_rate_data: {
-              type: 'fixed_amount',
-              fixed_amount: {
-                amount: Math.round(shippingCost * 100),
-                currency: currency,
-              },
-              display_name: 'Standard Shipping',
-            },
-          },
-        ] : undefined,
-      });
-
-      await db.order.update({
-        where: { id: order.id },
-        data: { stripePaymentIntentId: stripeSession.payment_intent as string || stripeSession.id },
-      });
-    } catch (stripeError: any) {
-      console.error("Stripe Session Creation Failed:", {
-        error: stripeError.message,
-        stack: stripeError.stack,
-        orderId: order.id,
-        userId: userId
-      });
-      // If Stripe fails, we have an order in DB with PENDING status.
-      // We should probably cancel the order to keep DB consistent with payment state.
-      await db.order.update({
-        where: { id: order.id },
-        data: { status: "CANCELLED" },
-      });
-
-      return NextResponse.json(
-        {
-          error: "Payment initialization failed",
-          message: "Could not create payment session. Your order has been cancelled."
-        },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ url: stripeSession.url });
+    return NextResponse.json({ orderId: order.id, orderNumber: order.orderNumber });
   } catch (error: any) {
     console.error("Order creation error:", {
       message: error.message,
@@ -307,15 +226,6 @@ export async function POST(request: NextRequest) {
       name: error.name,
       code: error.code
     });
-    // Log more details if it's a Stripe error
-    if (error?.type?.startsWith('Stripe')) {
-      console.error("Stripe Error Details:", {
-        message: error.message,
-        type: error.type,
-        code: error.code,
-        param: error.param
-      });
-    }
     return NextResponse.json(
       { error: "Failed to create order", message: error.message },
       { status: 500 }

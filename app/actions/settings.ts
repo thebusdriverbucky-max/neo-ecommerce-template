@@ -22,6 +22,10 @@ export interface StoreSettingsData {
   ctaSubtitle?: string;
   ctaButtonText?: string;
   footerCopyright?: string;
+  paymentIban?: string;
+  paymentBankName?: string;
+  paymentAccountName?: string;
+  paymentDetails?: string;
 }
 
 export async function getSettings() {
@@ -75,6 +79,10 @@ export async function updateSettings(data: StoreSettingsData) {
             ctaSubtitle: data.ctaSubtitle,
             ctaButtonText: data.ctaButtonText,
             footerCopyright: data.footerCopyright,
+            paymentIban: data.paymentIban,
+            paymentBankName: data.paymentBankName,
+            paymentAccountName: data.paymentAccountName,
+            paymentDetails: data.paymentDetails,
           },
         });
       } else {
@@ -98,6 +106,10 @@ export async function updateSettings(data: StoreSettingsData) {
             ctaSubtitle: data.ctaSubtitle,
             ctaButtonText: data.ctaButtonText,
             footerCopyright: data.footerCopyright,
+            paymentIban: data.paymentIban,
+            paymentBankName: data.paymentBankName,
+            paymentAccountName: data.paymentAccountName,
+            paymentDetails: data.paymentDetails,
           },
         });
       }

@@ -25,11 +25,41 @@ interface OrderConfirmationData {
   storeName: string;
   supportEmail: string;
   storeUrl: string;
+  currency?: string;
+  paymentIban?: string | null;
+  paymentBankName?: string | null;
+  paymentAccountName?: string | null;
+  paymentDetails?: string | null;
 }
 
 export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): string => {
   const { orderNumber, orderId, total, subtotal, tax, shippingCost,
-    items, storeName, supportEmail, storeUrl } = data;
+    items, storeName, supportEmail, storeUrl, currency = 'USD',
+    paymentIban, paymentBankName, paymentAccountName, paymentDetails } = data;
+
+  const paymentInstructionsHtml = paymentIban ? `
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:20px;margin:20px 0">
+      <h3 style="margin:0 0 12px 0;color:#1d4ed8">Payment Instructions</h3>
+      <p style="color:#374151;margin:0 0 12px 0">
+        Please transfer <strong>${total.toFixed(2)} ${currency}</strong> to:
+      </p>
+      <table style="width:100%;border-collapse:collapse">
+        <tr>
+          <td style="color:#6b7280;padding:4px 0">IBAN:</td>
+          <td style="font-family:monospace;font-weight:600">${paymentIban}</td>
+        </tr>
+        <tr>
+          <td style="color:#6b7280;padding:4px 0">Bank:</td>
+          <td style="font-weight:500">${paymentBankName || ''}</td>
+        </tr>
+        <tr>
+          <td style="color:#6b7280;padding:4px 0">Account Name:</td>
+          <td style="font-weight:500">${paymentAccountName || ''}</td>
+        </tr>
+      </table>
+      ${paymentDetails ? `<p style="margin:12px 0 0 0;color:#6b7280;font-size:14px">${paymentDetails}</p>` : ''}
+    </div>
+  ` : '';
 
   const itemsHtml = items.map((item, i) => `
     <tr style="background: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}">
@@ -123,6 +153,8 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
               </tr>
             </tbody>
           </table>
+
+          ${paymentInstructionsHtml}
 
           <!-- Track Order Button -->
           <div style="text-align:center;margin-top:28px;">

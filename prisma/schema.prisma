@@ -119,8 +119,6 @@ model Order {
   orderNumber   String?     @unique
   trackingNumber String?
 
-  stripePaymentIntentId String?
-  
   shippingAddressId String?
   shippingAddress   Address?  @relation("shipping", fields: [shippingAddressId], references: [id])
   
@@ -282,6 +280,10 @@ model StoreSettings {
   ctaSubtitle      String?
   ctaButtonText    String?
   footerCopyright  String?
+  paymentIban        String?
+  paymentBankName    String?
+  paymentAccountName String?
+  paymentDetails     String?  @db.Text
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

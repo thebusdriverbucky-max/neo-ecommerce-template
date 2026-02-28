@@ -104,10 +104,10 @@ Q: How can I track my order?
 A: You will receive a tracking number via email once your order ships. Use this number to track your package on the carrier website (USPS, UPS, or FedEx).
 
 Q: What payment methods do you accept?
-A: We accept all major credit cards (Visa, Mastercard, American Express), Apple Pay, Google Pay, and PayPal through our secure Stripe payment processor.
+A: We accept all major credit cards (Visa, Mastercard, American Express), Apple Pay, Google Pay, and PayPal.
 
 Q: Is my payment information secure?
-A: Yes. We use Stripe for payment processing, which is PCI-DSS compliant. We never store credit card information on our servers.
+A: Yes. We use secure payment processing, which is PCI-DSS compliant. We never store credit card information on our servers.
 
 Q: Can I cancel my order?
 A: If your order hasn't shipped yet, we can usually cancel it. Please contact us immediately with your order number.
@@ -155,7 +155,6 @@ We respect your privacy and are committed to protecting your personal data. This
 
 Information We Collect
 • Name and email address (for account creation)
-• Payment information (processed by Stripe - we don't store it)
 • Shipping address (for orders)
 • Usage data (cookies, analytics)
 
@@ -166,7 +165,7 @@ How We Use Your Data
 • Comply with legal obligations
 
 Payment Security
-Payment information is processed securely by Stripe. We do not store credit card information on our servers. All transactions are encrypted and PCI-DSS compliant.
+Payment information is processed securely. We do not store credit card information on our servers. All transactions are encrypted and PCI-DSS compliant.
 
 Your Rights
 You have the right to:
@@ -221,7 +220,6 @@ You can control and manage cookies through your browser settings. Most browsers 
 
 Third-Party Services
 We use third-party services that may set their own cookies:
-• Stripe: Payment processing
 • Google Analytics: Website analytics
 • NextAuth: Authentication`,
     isVisible: true,

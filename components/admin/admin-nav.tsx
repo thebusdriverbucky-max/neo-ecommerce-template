@@ -11,7 +11,6 @@ export function AdminNav() {
     { href: "/admin", label: "Dashboard" },
     { href: "/admin/products", label: "Products" },
     { href: "/admin/orders", label: "Orders" },
-    { href: "/admin/analytics", label: "Analytics" },
     { href: "/admin/discounts", label: "Discounts" },
     { href: "/admin/settings", label: "Settings" },
   ];

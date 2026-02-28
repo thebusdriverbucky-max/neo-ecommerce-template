@@ -10,7 +10,6 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:migrate": "prisma migrate dev",
-    "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhook",
     "postinstall": "prisma generate",
     "prisma:studio": "prisma studio"
   },
@@ -42,7 +41,6 @@
     "recharts": "^3.7.0",
     "resend": "^6.9.1",
     "sonner": "^2.0.7",
-    "stripe": "19.0.0",
     "tailwind-merge": "^2.3.0",
     "tailwindcss-animate": "^1.0.7",
     "zod": "^4.3.6",

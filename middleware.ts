@@ -9,7 +9,6 @@ const { auth } = NextAuth(authConfig);
 const LICENSE_SKIP_PATHS = [
   '/license-required',
   '/api/auth',
-  '/api/stripe/webhooks',
   '/_next',
   '/favicon.ico',
 ];

@@ -26,7 +26,6 @@ export default async function PrivacyPage() {
             <h2 className="text-2xl font-semibold mb-3">Information We Collect</h2>
             <ul className="list-disc list-inside space-y-2">
               <li>Name and email address (for account creation)</li>
-              <li>Payment information (processed by Stripe - we don't store it)</li>
               <li>Shipping address (for orders)</li>
               <li>Usage data (cookies, analytics)</li>
             </ul>
@@ -45,7 +44,7 @@ export default async function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-semibold mb-3">Payment Security</h2>
             <p>
-              Payment information is processed securely by Stripe. We do not store credit card
+              Payment information is processed securely. We do not store credit card
               information on our servers. All transactions are encrypted and PCI-DSS compliant.
             </p>
           </section>

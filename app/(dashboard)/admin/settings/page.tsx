@@ -7,6 +7,7 @@ import { getPages, updatePage, togglePageVisibility, ContentPageData, seedCMSPag
 import { COUNTRIES as ALL_COUNTRIES, PRODUCT_CATEGORIES, DEFAULT_CATEGORIES } from '@/lib/constants';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Textarea } from '@/components/ui/Textarea';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from 'sonner';
 import { Edit, Eye, EyeOff, Plus } from 'lucide-react';
@@ -60,6 +61,10 @@ export default function SettingsPage() {
       setValue('ctaSubtitle', data.ctaSubtitle || '');
       setValue('ctaButtonText', data.ctaButtonText || '');
       setValue('footerCopyright', data.footerCopyright || '');
+      setValue('paymentIban', data.paymentIban || '');
+      setValue('paymentBankName', data.paymentBankName || '');
+      setValue('paymentAccountName', data.paymentAccountName || '');
+      setValue('paymentDetails', data.paymentDetails || '');
     }
   };
 
@@ -198,7 +203,7 @@ export default function SettingsPage() {
 
       {activeTab === 'branding' && (
         <form onSubmit={handleSubmit(onSettingsSubmit)} className="space-y-6 bg-white p-6 rounded-lg shadow">
-          
+
           {/* Hero Section */}
           <div>
             <h3 className="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
@@ -248,7 +253,7 @@ export default function SettingsPage() {
             </h3>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Copyright Text</label>
-              <Input {...register('footerCopyright')} 
+              <Input {...register('footerCopyright')}
                 placeholder="© 2026 My Store. All rights reserved." />
               <p className="text-xs text-gray-400 mt-1">
                 Leave empty to use default: © {new Date().getFullYear()} {settings?.storeName || 'Store'}. All rights reserved.
@@ -391,6 +396,33 @@ export default function SettingsPage() {
                   <span className="text-sm">{category}</span>
                 </label>
               ))}
+            </div>
+          </div>
+
+          <div className="border-t pt-6">
+            <h3 className="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              💳 Payment Details (Bank Transfer)
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">IBAN</label>
+                <Input {...register('paymentIban')} placeholder="CY00 0000 0000 0000 0000 0000 0000" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
+                <Input {...register('paymentBankName')} placeholder="Bank of Cyprus" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account Holder</label>
+                <Input {...register('paymentAccountName')} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Additional Details</label>
+                <Textarea
+                  {...register('paymentDetails')}
+                  placeholder="Any extra payment info"
+                />
+              </div>
             </div>
           </div>
 

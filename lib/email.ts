@@ -62,7 +62,12 @@ export const sendOrderConfirmationEmail = async (
     tax?: number;
     shippingCost?: number;
     storeName?: string;
-    items: { name: string; qty: number; price: number }[]
+    items: { name: string; qty: number; price: number }[];
+    currency?: string;
+    paymentIban?: string | null;
+    paymentBankName?: string | null;
+    paymentAccountName?: string | null;
+    paymentDetails?: string | null;
   }
 ) => {
   const storeName = orderData.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
@@ -80,6 +85,11 @@ export const sendOrderConfirmationEmail = async (
     storeName,
     supportEmail,
     storeUrl,
+    currency: orderData.currency,
+    paymentIban: orderData.paymentIban,
+    paymentBankName: orderData.paymentBankName,
+    paymentAccountName: orderData.paymentAccountName,
+    paymentDetails: orderData.paymentDetails,
   });
 
   return sendEmail({

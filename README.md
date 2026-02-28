@@ -2,13 +2,12 @@
 
 # Neo Ecommerce Template
 
-Production-ready e-commerce platform built with Next.js 14.2 LTS, Stripe, and PostgreSQL.
+Production-ready e-commerce platform built with Next.js 14.2 LTS and PostgreSQL.
 
 ## Features
 
 - **Product Management**: Catalog with filters, search, and featured products
 - **Shopping Cart**: Client-side cart with Zustand state management
-- **Stripe Integration**: Complete payment processing with webhook handling
 - **Authentication**: NextAuth with Google and GitHub OAuth
 - **Admin Dashboard**: Product and order management
 - **Responsive Design**: Mobile-first approach
@@ -21,7 +20,6 @@ Production-ready e-commerce platform built with Next.js 14.2 LTS, Stripe, and Po
 
 - Node.js 20+ LTS
 - PostgreSQL (local or Neon)
-- Stripe account
 - GitHub & Google OAuth credentials
 
 ### Installation
@@ -36,13 +34,12 @@ cp .env.local.example .env.local
 
 # E-Commerce Platform
 
-Modern e-commerce platform built with Next.js 14, Prisma, Stripe, and NextAuth v5.
+Modern e-commerce platform built with Next.js 14, Prisma, and NextAuth v5.
 
 ## Features
 
 - 🛍️ Product catalog with search and filters
 - 🛒 Shopping cart with persistent state
-- 💳 Stripe payment integration
 - 🔐 Authentication (Google OAuth + Credentials)
 - 👤 User accounts and order history
 - 🎨 Dark mode support
@@ -57,7 +54,6 @@ Modern e-commerce platform built with Next.js 14, Prisma, Stripe, and NextAuth v
 - **Database:** PostgreSQL (Neon)
 - **ORM:** Prisma
 - **Authentication:** NextAuth v5
-- **Payments:** Stripe
 - **Styling:** Tailwind CSS
 - **Email:** Resend
 - **Rate Limiting:** Upstash Redis
@@ -68,7 +64,6 @@ Modern e-commerce platform built with Next.js 14, Prisma, Stripe, and NextAuth v
 
 - Node.js 18+
 - PostgreSQL database (Neon/Supabase)
-- Stripe account
 - Google OAuth credentials
 - Resend account
 
@@ -119,10 +114,6 @@ See \`.env.example\` for all required environment variables.
 4. Deploy!
 
 Build command: \`npx prisma migrate deploy && next build\`
-
-### Stripe Setup
-
-See [STRIPE_SETUP.md](STRIPE_SETUP.md) for production setup instructions.
 
 ## License
 
