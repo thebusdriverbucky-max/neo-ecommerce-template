@@ -21,7 +21,9 @@ export const authConfig = {
         token.id = user.id;
         token.role = user.role || "CUSTOMER";
 
-        if (user.email === process.env.ADMIN_EMAIL) {
+        // Securely assign ADMIN role only during initial authentication
+        const adminEmail = process.env.ADMIN_EMAIL;
+        if (adminEmail && user.email === adminEmail) {
           token.role = "ADMIN";
         }
       }
