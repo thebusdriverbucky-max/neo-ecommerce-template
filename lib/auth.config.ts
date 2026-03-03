@@ -20,6 +20,10 @@ export const authConfig = {
       if (user) {
         token.id = user.id;
         token.role = user.role || "CUSTOMER";
+
+        if (user.email === process.env.ADMIN_EMAIL) {
+          token.role = "ADMIN";
+        }
       }
       return token;
     },
