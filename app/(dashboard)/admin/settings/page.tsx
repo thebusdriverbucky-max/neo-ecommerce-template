@@ -10,7 +10,8 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from 'sonner';
-import { Edit, Eye, EyeOff, Plus } from 'lucide-react';
+import { Edit, Eye, EyeOff, Plus, Upload } from 'lucide-react';
+import { CldUploadWidget } from 'next-cloudinary';
 
 // Hardcoded list of countries for now
 const COUNTRIES = [
@@ -61,6 +62,9 @@ export default function SettingsPage() {
       setValue('ctaSubtitle', data.ctaSubtitle || '');
       setValue('ctaButtonText', data.ctaButtonText || '');
       setValue('footerCopyright', data.footerCopyright || '');
+      setValue('faviconUrl', data.faviconUrl || '');
+      setValue('ogImageUrl', data.ogImageUrl || '');
+      setValue('siteLang', data.siteLang || 'en');
       setValue('paymentIban', data.paymentIban || '');
       setValue('paymentBankName', data.paymentBankName || '');
       setValue('paymentAccountName', data.paymentAccountName || '');
@@ -207,6 +211,78 @@ export default function SettingsPage() {
           {/* Hero Section */}
           <div>
             <h3 className="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              🖼️ Site Assets
+              <span className="text-xs font-normal text-gray-400">(Favicon and OG Image)</span>
+            </h3>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">Favicon URL</label>
+                <div className="flex gap-2">
+                  <Input
+                    {...register('faviconUrl')}
+                    placeholder="https://i.imgur.com/..."
+                    className="flex-1"
+                  />
+                  <CldUploadWidget
+                    uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
+                    onSuccess={(result: any) => {
+                      if (result.info?.secure_url) {
+                        setValue('faviconUrl', result.info.secure_url);
+                      }
+                    }}
+                  >
+                    {({ open }) => (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => open()}
+                        className="gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        Upload
+                      </Button>
+                    )}
+                  </CldUploadWidget>
+                </div>
+                <p className="text-xs text-gray-400">Recommended: 32x32 or 64x64 PNG/ICO</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">Open Graph Image (OG Image)</label>
+                <div className="flex gap-2">
+                  <Input
+                    {...register('ogImageUrl')}
+                    placeholder="https://res.cloudinary.com/..."
+                    className="flex-1"
+                  />
+                  <CldUploadWidget
+                    uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
+                    onSuccess={(result: any) => {
+                      if (result.info?.secure_url) {
+                        setValue('ogImageUrl', result.info.secure_url);
+                      }
+                    }}
+                  >
+                    {({ open }) => (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => open()}
+                        className="gap-2"
+                      >
+                        <Upload className="w-4 h-4" />
+                        Upload
+                      </Button>
+                    )}
+                  </CldUploadWidget>
+                </div>
+                <p className="text-xs text-gray-400">Recommended: 1200x630 PNG/JPG for social sharing</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t pt-6">
+            <h3 className="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
               🏠 Hero Section
               <span className="text-xs font-normal text-gray-400">(Main banner on homepage)</span>
             </h3>
@@ -303,6 +379,25 @@ export default function SettingsPage() {
               </select>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Site Language (HTML lang)</label>
+              <select
+                {...register('siteLang')}
+                className="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="en">English (en)</option>
+                <option value="ru">Russian (ru)</option>
+                <option value="de">German (de)</option>
+                <option value="fr">French (fr)</option>
+                <option value="es">Spanish (es)</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Sets the lang attribute of the html tag
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tax Rate (%)</label>
               <Input

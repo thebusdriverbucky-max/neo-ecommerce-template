@@ -280,6 +280,9 @@ model StoreSettings {
   ctaSubtitle      String?
   ctaButtonText    String?
   footerCopyright  String?
+  faviconUrl       String?
+  ogImageUrl       String?
+  siteLang         String?  @default("en")
   paymentIban        String?
   paymentBankName    String?
   paymentAccountName String?

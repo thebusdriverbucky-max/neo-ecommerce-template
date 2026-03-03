@@ -10,37 +10,54 @@ import { Footer } from "@/components/layout/footer";
 import { Toaster } from "sonner";
 import { CookieBanner } from "@/components/layout/CookieBanner";
 import { Analytics } from "@vercel/analytics/react";
+import { db as prisma } from "@/lib/db";
 
 const inter = Inter({ subsets: ["latin"] });
 
-export const metadata: Metadata = {
-  title: "E-Commerce Store | Quality Products",
-  description: "Browse and shop our curated collection of quality products",
-  icons: {
-    icon: "https://i.imgur.com/udCYp7c.png",
-  },
-  openGraph: {
-    type: "website",
-    locale: "en_US",
-    url: "https://neo-e-commerce.vercel.app",
-    title: "E-Commerce Store",
-    description: "Quality products at great prices",
-    images: [{ url: "https://i.imgur.com/udCYp7c.png" }],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "E-Commerce Store",
-    description: "Quality products at great prices",
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const settings = await prisma.storeSettings.findFirst();
+  const siteName = settings?.storeName || "My Store";
+  const siteDescription = settings?.heroSubtitle || "Quality products at great prices";
+  const faviconUrl = settings?.faviconUrl || "https://i.imgur.com/udCYp7c.png";
+  const ogImageUrl = settings?.ogImageUrl || faviconUrl;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://neo-e-commerce.vercel.app";
 
-export default function RootLayout({
+  return {
+    title: {
+      default: siteName,
+      template: `%s | ${siteName}`,
+    },
+    description: siteDescription,
+    icons: {
+      icon: faviconUrl,
+    },
+    openGraph: {
+      type: "website",
+      locale: settings?.siteLang === "ru" ? "ru_RU" : "en_US",
+      url: siteUrl,
+      title: siteName,
+      description: siteDescription,
+      images: [{ url: ogImageUrl }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: siteName,
+      description: siteDescription,
+      images: [ogImageUrl],
+    },
+  };
+}
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const settings = await prisma.storeSettings.findFirst();
+  const siteLang = settings?.siteLang || "en";
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang={siteLang} suppressHydrationWarning>
       <body className={inter.className}>
         <SessionProvider>
           <ThemeProvider attribute="class" defaultTheme="light" forcedTheme="light" enableSystem={false}>

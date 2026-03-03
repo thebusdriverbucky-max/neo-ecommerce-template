@@ -22,6 +22,9 @@ export interface StoreSettingsData {
   ctaSubtitle?: string;
   ctaButtonText?: string;
   footerCopyright?: string;
+  faviconUrl?: string;
+  ogImageUrl?: string;
+  siteLang?: string;
   paymentIban?: string;
   paymentBankName?: string;
   paymentAccountName?: string;
@@ -79,6 +82,9 @@ export async function updateSettings(data: StoreSettingsData) {
             ctaSubtitle: data.ctaSubtitle,
             ctaButtonText: data.ctaButtonText,
             footerCopyright: data.footerCopyright,
+            faviconUrl: data.faviconUrl,
+            ogImageUrl: data.ogImageUrl,
+            siteLang: data.siteLang,
             paymentIban: data.paymentIban,
             paymentBankName: data.paymentBankName,
             paymentAccountName: data.paymentAccountName,
@@ -106,6 +112,9 @@ export async function updateSettings(data: StoreSettingsData) {
             ctaSubtitle: data.ctaSubtitle,
             ctaButtonText: data.ctaButtonText,
             footerCopyright: data.footerCopyright,
+            faviconUrl: data.faviconUrl,
+            ogImageUrl: data.ogImageUrl,
+            siteLang: data.siteLang,
             paymentIban: data.paymentIban,
             paymentBankName: data.paymentBankName,
             paymentAccountName: data.paymentAccountName,
