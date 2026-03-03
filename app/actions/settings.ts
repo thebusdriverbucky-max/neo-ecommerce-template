@@ -22,6 +22,9 @@ export interface StoreSettingsData {
   ctaSubtitle?: string;
   ctaButtonText?: string;
   footerCopyright?: string;
+  faviconUrl?: string;
+  ogImageUrl?: string;
+  siteLang?: string;
 }
 
 export async function getSettings() {
@@ -75,6 +78,9 @@ export async function updateSettings(data: StoreSettingsData) {
             ctaSubtitle: data.ctaSubtitle,
             ctaButtonText: data.ctaButtonText,
             footerCopyright: data.footerCopyright,
+            faviconUrl: data.faviconUrl,
+            ogImageUrl: data.ogImageUrl,
+            siteLang: data.siteLang,
           },
         });
       } else {
@@ -98,6 +104,9 @@ export async function updateSettings(data: StoreSettingsData) {
             ctaSubtitle: data.ctaSubtitle,
             ctaButtonText: data.ctaButtonText,
             footerCopyright: data.footerCopyright,
+            faviconUrl: data.faviconUrl,
+            ogImageUrl: data.ogImageUrl,
+            siteLang: data.siteLang,
           },
         });
       }

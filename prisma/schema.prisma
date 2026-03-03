@@ -282,6 +282,9 @@ model StoreSettings {
   ctaSubtitle      String?
   ctaButtonText    String?
   footerCopyright  String?
+  faviconUrl       String?
+  ogImageUrl       String?
+  siteLang         String?  @default("en")
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
