@@ -37,11 +37,24 @@ export async function POST(request: NextRequest) {
       throw error;
     }
 
-    const { items, shippingAddress, guestEmail } = validatedData;
+    const { items, shippingAddress } = validatedData;
+    let { guestEmail } = validatedData;
     const { billingAddressId, discountCode } = body;
 
-    if (!userId && !guestEmail) {
-      return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
+    let validUserId = undefined;
+    if (userId) {
+      const userExists = await db.user.findUnique({ where: { id: userId } });
+      if (userExists) {
+        validUserId = userId;
+      }
+    }
+
+    if (!validUserId && !guestEmail) {
+      if (shippingAddress?.email) {
+        guestEmail = shippingAddress.email;
+      } else {
+        return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
+      }
     }
 
     // Fetch store settings
@@ -102,7 +115,7 @@ export async function POST(request: NextRequest) {
     const shipping = shippingCost;
     const finalTotal = total + tax + shipping;
 
-    console.log("ORDER CREATION STARTED", { userId });
+    console.log("ORDER CREATION STARTED", { validUserId });
 
     // Transaction for atomic order creation and stock update
     const order = await db.$transaction(async (tx) => {
@@ -113,7 +126,7 @@ export async function POST(request: NextRequest) {
           data: {
             ...shippingAddress,
             state: shippingAddress.state || "",
-            userId: userId || undefined,
+            userId: validUserId || undefined,
           } as any,
         });
         newShippingAddressId = newAddress.id;
@@ -131,7 +144,7 @@ export async function POST(request: NextRequest) {
 
       // Create order
       console.log("CREATING ORDER IN DB", {
-        userId: userId,
+        userId: validUserId,
         orderNumber,
         finalTotal
       });
@@ -145,7 +158,7 @@ export async function POST(request: NextRequest) {
         total: finalTotal,
         currency: storeCurrency,
         shippingAddressId: newShippingAddressId,
-        billingAddressId,
+        billingAddressId: billingAddressId || undefined,
         items: {
           create: orderItemsData.map(item => ({
             productId: item.productId,
@@ -155,8 +168,8 @@ export async function POST(request: NextRequest) {
         },
       };
 
-      if (userId) {
-        orderData.userId = userId;
+      if (validUserId) {
+        orderData.userId = validUserId;
       } else {
         orderData.guestEmail = guestEmail;
       }

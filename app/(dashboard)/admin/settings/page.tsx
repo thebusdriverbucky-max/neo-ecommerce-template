@@ -152,6 +152,10 @@ export default function SettingsPage() {
   };
 
   const handleSelectAllCountries = () => {
+    setValue('enabledCountries', ALL_COUNTRIES.map(c => c.name));
+  };
+
+  const handleDeselectAllCountries = () => {
     setValue('enabledCountries', []);
   };
 
@@ -175,7 +179,7 @@ export default function SettingsPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Admin Settings</h1>
 
-      <div className="flex space-x-4 mb-6 border-b">
+      <div className="flex space-x-4 mb-6 border-b overflow-x-auto whitespace-nowrap">
         <button
           className={`pb-2 px-4 ${activeTab === 'general'
             ? 'border-b-2 border-blue-600 font-semibold text-blue-600'
@@ -445,15 +449,24 @@ export default function SettingsPage() {
                   Select specific countries to restrict shipping destinations.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleSelectAllCountries}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-              >
-                Allow All Countries
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAllCountries}
+                  className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  Allow All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeselectAllCountries}
+                  className="text-sm text-red-600 hover:text-red-800 font-medium"
+                >
+                  Deselect All
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
               {ALL_COUNTRIES.map((country) => (
                 <label key={country.code} className="flex items-center space-x-2 cursor-pointer">
                   <input
@@ -479,7 +492,7 @@ export default function SettingsPage() {
                 {selectedCategories.length === PRODUCT_CATEGORIES.length ? 'Deselect All' : 'Select All'}
               </button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
               {PRODUCT_CATEGORIES.map((category) => (
                 <label key={category} className="flex items-center space-x-2 cursor-pointer">
                   <input
