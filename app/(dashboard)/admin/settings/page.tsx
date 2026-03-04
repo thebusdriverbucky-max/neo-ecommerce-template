@@ -147,6 +147,10 @@ export default function SettingsPage() {
   };
 
   const handleSelectAllCountries = () => {
+    setValue('enabledCountries', ALL_COUNTRIES.map(c => c.name));
+  };
+
+  const handleDeselectAllCountries = () => {
     setValue('enabledCountries', []);
   };
 
@@ -170,29 +174,29 @@ export default function SettingsPage() {
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Admin Settings</h1>
 
-      <div className="flex space-x-4 mb-6 border-b">
+      <div className="flex overflow-x-auto pb-2 mb-6 border-b scrollbar-hide -mx-2 px-2 sm:mx-0 sm:px-0 sm:space-x-4">
         <button
-          className={`pb-2 px-4 ${activeTab === 'general'
+          className={`pb-2 px-4 whitespace-nowrap transition-colors ${activeTab === 'general'
             ? 'border-b-2 border-blue-600 font-semibold text-blue-600'
-            : 'text-gray-500'
+            : 'text-gray-500 hover:text-gray-700'
             }`}
           onClick={() => setActiveTab('general')}
         >
           General Settings
         </button>
         <button
-          className={`pb-2 px-4 ${activeTab === 'branding'
+          className={`pb-2 px-4 whitespace-nowrap transition-colors ${activeTab === 'branding'
             ? 'border-b-2 border-blue-600 font-semibold text-blue-600'
-            : 'text-gray-500'
+            : 'text-gray-500 hover:text-gray-700'
             }`}
           onClick={() => setActiveTab('branding')}
         >
           Branding & Content
         </button>
         <button
-          className={`pb-2 px-4 ${activeTab === 'cms'
+          className={`pb-2 px-4 whitespace-nowrap transition-colors ${activeTab === 'cms'
             ? 'border-b-2 border-blue-600 font-semibold text-blue-600'
-            : 'text-gray-500'
+            : 'text-gray-500 hover:text-gray-700'
             }`}
           onClick={() => setActiveTab('cms')}
         >
@@ -430,23 +434,32 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <div className="flex justify-between items-center mb-2">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Enabled Countries</label>
                 <p className="text-xs text-gray-400 mt-1">
-                  No countries selected = all countries allowed at checkout.
                   Select specific countries to restrict shipping destinations.
+                  If none selected, all countries are allowed.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={handleSelectAllCountries}
-                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-              >
-                Allow All Countries
-              </button>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleSelectAllCountries}
+                  className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  Allow All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeselectAllCountries}
+                  className="text-sm text-gray-500 hover:text-gray-700 font-medium"
+                >
+                  Deselect All
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
               {ALL_COUNTRIES.map((country) => (
                 <label key={country.code} className="flex items-center space-x-2 cursor-pointer">
                   <input

@@ -18,20 +18,17 @@ export const addressSchema = z.object({
   lastName: z.string().min(1, "Last name is required"),
   email: z.string().email("Invalid email"),
   phone: z.string()
-    .min(7, "Phone number is too short")
-    .max(20, "Phone number is too long")
-    .regex(/^[\+]?[\d\s\-\(\)]{7,20}$/, "Invalid phone number format"),
+    .min(5, "Phone number is too short")
+    .max(25, "Phone number is too long")
+    .regex(/^[\+]?[\d\s\-\(\)]{5,25}$/, "Invalid phone number format"),
   street: z.string().min(1, "Street is required"),
   city: z.string()
-    .min(2, "City name must be at least 2 characters")
-    .max(100, "City name is too long")
-    .regex(/^[a-zA-ZÀ-ÿ\s\-'.]+$/, "City name can only contain letters, spaces, hyphens and apostrophes"),
+    .min(1, "City name is required")
+    .max(100, "City name is too long"),
   state: z.string().default(""),
   postalCode: z.string()
-    .min(2, "Postal code is too short")
-    .max(12, "Postal code is too long")
-    .regex(/^[A-Z0-9][A-Z0-9\s\-]{0,10}[A-Z0-9]$|^[A-Z0-9]$/i,
-      "Invalid postal code format"),
+    .min(1, "Postal code is required")
+    .max(15, "Postal code is too long"),
   country: z.string().min(1, "Country is required"),
   isDefault: z.boolean().default(false),
 }).superRefine((data, ctx) => {

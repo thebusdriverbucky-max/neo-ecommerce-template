@@ -55,7 +55,7 @@ export function ProductCard({ product }: ProductCardProps) {
 
   return (
     <Link href={`/products/${product.slug}`}>
-      <div className="bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow hover:shadow-lg transition-shadow">
+      <div className="bg-sky-100/40 dark:bg-gray-800 rounded-lg overflow-hidden shadow hover:shadow-lg transition-shadow">
         <div className="relative h-64 w-full">
           <div className="absolute top-2 right-2 z-10">
             <WishlistButton productId={product.id} />

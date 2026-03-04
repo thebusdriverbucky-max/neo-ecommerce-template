@@ -33,13 +33,21 @@ export async function POST(request: NextRequest) {
       validatedData = createOrderSchema.parse(body);
     } catch (error) {
       if (error instanceof z.ZodError) {
+        console.error("Zod Validation Error:", error.issues);
         return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
       }
       throw error;
     }
 
     const { items, shippingAddress, guestEmail } = validatedData;
-    const { billingAddressId, discountCode } = body;
+    const { billingAddressId, discountCode, shippingAddressId: bodyShippingAddressId } = body;
+
+    console.log("Order data received:", {
+      itemCount: items.length,
+      hasShippingAddress: !!shippingAddress,
+      shippingAddressId: bodyShippingAddressId,
+      guestEmail
+    });
 
     if (!userId && !guestEmail) {
       return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
@@ -107,9 +115,10 @@ export async function POST(request: NextRequest) {
 
     // Transaction for atomic order creation and stock update
     const order = await db.$transaction(async (tx) => {
-      let newShippingAddressId = null;
+      let finalShippingAddressId = bodyShippingAddressId || null;
 
       if (shippingAddress) {
+        console.log("Creating new shipping address...");
         const newAddress = await tx.address.create({
           data: {
             ...shippingAddress,
@@ -117,7 +126,8 @@ export async function POST(request: NextRequest) {
             userId: userId || undefined,
           } as any,
         });
-        newShippingAddressId = newAddress.id;
+        finalShippingAddressId = newAddress.id;
+        console.log("New shipping address created:", finalShippingAddressId);
       }
 
       // Generate order number
@@ -134,7 +144,8 @@ export async function POST(request: NextRequest) {
       console.log("CREATING ORDER IN DB", {
         userId: userId,
         orderNumber,
-        finalTotal
+        finalTotal,
+        shippingAddressId: finalShippingAddressId
       });
 
       const orderData: any = {
@@ -145,7 +156,7 @@ export async function POST(request: NextRequest) {
         shippingCost: shipping,
         total: finalTotal,
         currency: storeCurrency,
-        shippingAddressId: newShippingAddressId,
+        shippingAddressId: finalShippingAddressId,
         billingAddressId,
         items: {
           create: orderItemsData.map(item => ({
@@ -241,6 +252,7 @@ export async function POST(request: NextRequest) {
 
     let stripeSession;
     try {
+      console.log("Creating Stripe session...");
       stripeSession = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         line_items,
@@ -272,9 +284,11 @@ export async function POST(request: NextRequest) {
         ] : undefined,
       });
 
+      console.log("Stripe session created:", stripeSession.id);
+
       await db.order.update({
         where: { id: order.id },
-        data: { stripePaymentIntentId: stripeSession.payment_intent as string || stripeSession.id },
+        data: { stripePaymentIntentId: stripeSession.payment_intent as string || stripeSession.id } as any,
       });
     } catch (stripeError: any) {
       console.error("Stripe Session Creation Failed:", {

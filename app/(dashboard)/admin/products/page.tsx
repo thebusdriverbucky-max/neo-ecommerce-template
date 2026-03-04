@@ -356,7 +356,14 @@ export default function AdminProductsPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => open()}
+                    onClick={() => {
+                      // Save current state before opening widget
+                      localStorage.setItem(
+                        "admin_product_form_draft",
+                        JSON.stringify({ data: formData, editingId })
+                      );
+                      open();
+                    }}
                     className="gap-2"
                   >
                     <Upload className="w-4 h-4" />
