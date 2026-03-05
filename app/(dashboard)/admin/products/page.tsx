@@ -40,6 +40,7 @@ export default function AdminProductsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [enabledCategories, setEnabledCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  const [newImageUrl, setNewImageUrl] = useState("");
   const [formData, setFormData] = useState({
     name: "",
     slug: "",
@@ -216,7 +217,23 @@ export default function AdminProductsPage() {
       isArchived: false,
     });
     setEditingId(null);
+    setNewImageUrl("");
     localStorage.removeItem("admin_product_form_draft");
+  };
+
+  const handleAddImageUrl = () => {
+    if (newImageUrl && formData.images.length < 4) {
+      setFormData((prev) => {
+        const newImages = [...prev.images, newImageUrl];
+        const newData = { ...prev, images: newImages };
+        localStorage.setItem(
+          "admin_product_form_draft",
+          JSON.stringify({ data: newData, editingId })
+        );
+        return newData;
+      });
+      setNewImageUrl("");
+    }
   };
 
   const handleOpenDialog = () => {
@@ -415,41 +432,74 @@ export default function AdminProductsPage() {
                   </Button>
                 </div>
               ))}
+
               {formData.images.length < 4 && (
-                <CldUploadWidget
-                  uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                  onSuccess={(result: any) => {
-                    if (result.info?.secure_url) {
-                      setFormData((prev) => {
-                        const newImages = [...prev.images, result.info.secure_url];
-                        const newData = { ...prev, images: newImages };
-                        localStorage.setItem(
-                          "admin_product_form_draft",
-                          JSON.stringify({ data: newData, editingId })
-                        );
-                        return newData;
-                      });
-                    }
-                  }}
-                >
-                  {({ open }) => (
+                <div className="space-y-3 pt-2 border-t border-dashed">
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Paste additional image URL..."
+                      type="url"
+                      value={newImageUrl}
+                      onChange={(e) => setNewImageUrl(e.target.value)}
+                    />
                     <Button
                       type="button"
-                      variant="outline"
-                      onClick={() => {
-                        localStorage.setItem(
-                          "admin_product_form_draft",
-                          JSON.stringify({ data: formData, editingId })
-                        );
-                        open();
-                      }}
-                      className="gap-2 w-full"
+                      variant="secondary"
+                      onClick={handleAddImageUrl}
+                      disabled={!newImageUrl}
+                      className="w-full gap-2"
                     >
                       <Plus className="w-4 h-4" />
-                      Add Additional Image
+                      Add by URL
                     </Button>
-                  )}
-                </CldUploadWidget>
+                  </div>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-background px-2 text-muted-foreground">
+                        Or upload from device
+                      </span>
+                    </div>
+                  </div>
+
+                  <CldUploadWidget
+                    uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
+                    onSuccess={(result: any) => {
+                      if (result.info?.secure_url) {
+                        setFormData((prev) => {
+                          const newImages = [...prev.images, result.info.secure_url];
+                          const newData = { ...prev, images: newImages };
+                          localStorage.setItem(
+                            "admin_product_form_draft",
+                            JSON.stringify({ data: newData, editingId })
+                          );
+                          return newData;
+                        });
+                      }
+                    }}
+                  >
+                    {({ open }) => (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          localStorage.setItem(
+                            "admin_product_form_draft",
+                            JSON.stringify({ data: formData, editingId })
+                          );
+                          open();
+                        }}
+                        className="gap-2 w-full"
+                      >
+                        <Upload className="w-4 h-4" />
+                        Upload Additional Image
+                      </Button>
+                    )}
+                  </CldUploadWidget>
+                </div>
               )}
             </div>
           </div>
