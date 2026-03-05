@@ -67,6 +67,11 @@ async function licenseMiddleware(request: NextRequest): Promise<NextResponse | n
 }
 
 export default async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  if (pathname.includes('stripe/webhooks')) {
+    console.log("Middleware processing webhook:", pathname);
+  }
+
   // 1. License check first
   const licenseResponse = await licenseMiddleware(request);
 
@@ -115,6 +120,6 @@ export default async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/stripe/webhooks).*)',
   ],
 };

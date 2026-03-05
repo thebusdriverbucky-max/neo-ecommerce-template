@@ -13,8 +13,23 @@ export async function POST(request: NextRequest) {
     const session = await auth();
 
     const userId = session?.user?.id;
+
+    // Verify userId exists in DB if provided
+    let dbUserId = null;
+    if (userId) {
+      const user = await db.user.findUnique({
+        where: { id: userId },
+        select: { id: true }
+      });
+      if (user) {
+        dbUserId = user.id;
+      } else {
+        console.warn(`⚠️ User ID ${userId} from session not found in database. Proceeding as guest or with limited user data.`);
+      }
+    }
+
     const userIp = request.ip ?? "127.0.0.1";
-    const rateLimitKey = userId || userIp;
+    const rateLimitKey = dbUserId || userIp;
 
     // Rate Limiting
     const { success } = await checkRateLimit(rateLimitKey, "orders");
@@ -30,10 +45,12 @@ export async function POST(request: NextRequest) {
     // Zod Validation
     let validatedData;
     try {
+      console.log("Validating body:", JSON.stringify(body, null, 2));
       validatedData = createOrderSchema.parse(body);
+      console.log("Validation successful");
     } catch (error) {
       if (error instanceof z.ZodError) {
-        console.error("Zod Validation Error:", error.issues);
+        console.error("❌ Zod Validation Error:", error.issues);
         return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
       }
       throw error;
@@ -49,7 +66,7 @@ export async function POST(request: NextRequest) {
       guestEmail
     });
 
-    if (!userId && !guestEmail) {
+    if (!dbUserId && !guestEmail) {
       return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
     }
 
@@ -111,41 +128,43 @@ export async function POST(request: NextRequest) {
     const shipping = shippingCost;
     const finalTotal = total + tax + shipping;
 
-    console.log("ORDER CREATION STARTED", { userId });
+    console.log("📦 ORDER CREATION STARTED", { dbUserId });
 
     // Transaction for atomic order creation and stock update
     const order = await db.$transaction(async (tx) => {
       let finalShippingAddressId = bodyShippingAddressId || null;
+      console.log("🔍 Initial shippingAddressId:", finalShippingAddressId);
 
       if (shippingAddress) {
-        console.log("Creating new shipping address...");
+        console.log("🏠 Creating new shipping address...");
         const newAddress = await tx.address.create({
           data: {
             ...shippingAddress,
             state: shippingAddress.state || "",
-            userId: userId || undefined,
+            userId: dbUserId || undefined,
           } as any,
         });
         finalShippingAddressId = newAddress.id;
-        console.log("New shipping address created:", finalShippingAddressId);
+        console.log("✅ New shipping address created:", finalShippingAddressId);
       }
 
       // Generate order number
       let orderNumber;
       try {
         orderNumber = await generateOrderNumber();
-        console.log("GENERATED ORDER NUMBER:", orderNumber);
+        console.log("🔢 GENERATED ORDER NUMBER:", orderNumber);
       } catch (err) {
-        console.error("ERROR GENERATING ORDER NUMBER:", err);
+        console.error("❌ ERROR GENERATING ORDER NUMBER:", err);
         throw new Error("Failed to generate order number");
       }
 
       // Create order
-      console.log("CREATING ORDER IN DB", {
-        userId: userId,
+      console.log("📝 CREATING ORDER IN DB", {
+        userId: dbUserId,
         orderNumber,
         finalTotal,
-        shippingAddressId: finalShippingAddressId
+        shippingAddressId: finalShippingAddressId,
+        billingAddressId
       });
 
       const orderData: any = {
@@ -167,18 +186,19 @@ export async function POST(request: NextRequest) {
         },
       };
 
-      if (userId) {
-        orderData.userId = userId;
+      if (dbUserId) {
+        orderData.userId = dbUserId;
       } else {
         orderData.guestEmail = guestEmail;
       }
 
       const newOrder = await tx.order.create({ data: orderData });
+      console.log("✅ Order created in DB:", newOrder.id);
 
       return newOrder;
     });
 
-    console.log("ORDER CREATED SUCCESSFULLY", order.id);
+    console.log("🎉 ORDER TRANSACTION COMPLETED SUCCESSFULLY", order.id);
 
     // Check for low stock after transaction (best effort)
     // Use Promise.allSettled to ensure email failures don't block the process
@@ -261,12 +281,12 @@ export async function POST(request: NextRequest) {
         cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout?canceled=true`,
         metadata: {
           orderId: order.id,
-          ...(userId && { userId }),
+          ...(dbUserId && { userId: dbUserId }),
         },
         payment_intent_data: {
           metadata: {
             orderId: order.id,
-            ...(userId && { userId }),
+            ...(dbUserId && { userId: dbUserId }),
           },
         },
         discounts: stripeDiscounts,
@@ -284,14 +304,20 @@ export async function POST(request: NextRequest) {
         ] : undefined,
       });
 
-      console.log("Stripe session created:", stripeSession.id);
+      console.log("Stripe session created:", {
+        sessionId: stripeSession.id,
+        paymentIntentId: stripeSession.payment_intent
+      });
+
+      const stripeIdToSave = (stripeSession.payment_intent as string) || stripeSession.id;
+      console.log(`Saving Stripe ID to order ${order.id}: ${stripeIdToSave}`);
 
       await db.order.update({
         where: { id: order.id },
-        data: { stripePaymentIntentId: stripeSession.payment_intent as string || stripeSession.id } as any,
+        data: { stripePaymentIntentId: stripeIdToSave } as any,
       });
     } catch (stripeError: any) {
-      console.error("Stripe Session Creation Failed:", {
+      console.error("❌ Stripe Session Creation Failed:", {
         error: stripeError.message,
         stack: stripeError.stack,
         orderId: order.id,
@@ -299,15 +325,19 @@ export async function POST(request: NextRequest) {
       });
       // If Stripe fails, we have an order in DB with PENDING status.
       // We should probably cancel the order to keep DB consistent with payment state.
-      await db.order.update({
-        where: { id: order.id },
-        data: { status: "CANCELLED" },
-      });
+      try {
+        await db.order.update({
+          where: { id: order.id },
+          data: { status: "CANCELLED" },
+        });
+      } catch (updateError) {
+        console.error("❌ Failed to cancel order after Stripe failure:", updateError);
+      }
 
       return NextResponse.json(
         {
           error: "Payment initialization failed",
-          message: "Could not create payment session. Your order has been cancelled."
+          message: stripeError.message || "Could not create payment session. Your order has been cancelled."
         },
         { status: 502 }
       );
@@ -315,23 +345,21 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ url: stripeSession.url });
   } catch (error: any) {
-    console.error("Order creation error:", {
+    console.error("❌ DETAILED Order creation error:", {
       message: error.message,
       stack: error.stack,
       name: error.name,
-      code: error.code
+      code: error.code,
+      userId: (await auth())?.user?.id,
     });
-    // Log more details if it's a Stripe error
-    if (error?.type?.startsWith('Stripe')) {
-      console.error("Stripe Error Details:", {
-        message: error.message,
-        type: error.type,
+    if (error.clientVersion) {
+      console.error("Prisma Error Details:", {
         code: error.code,
-        param: error.param
+        meta: error.meta,
       });
     }
     return NextResponse.json(
-      { error: "Failed to create order", message: error.message },
+      { error: "Failed to create order", message: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined },
       { status: 500 }
     );
   }

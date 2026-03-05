@@ -10,7 +10,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:migrate": "prisma migrate dev",
-    "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhook",
+    "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhooks",
     "postinstall": "prisma generate",
     "prisma:studio": "prisma studio"
   },
