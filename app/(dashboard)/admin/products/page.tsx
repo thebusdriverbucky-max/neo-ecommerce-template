@@ -25,6 +25,7 @@ interface Product {
   category: string;
   stock: number;
   image: string;
+  images: string[];
   featured: boolean;
   isArchived: boolean;
   currency: string;
@@ -47,6 +48,7 @@ export default function AdminProductsPage() {
     category: "",
     stock: "",
     image: "",
+    images: [] as string[],
     featured: false,
     isArchived: false,
   });
@@ -54,21 +56,6 @@ export default function AdminProductsPage() {
   if (session?.user?.role !== "ADMIN") {
     redirect("/");
   }
-
-  // Load form data from localStorage on mount (to prevent data loss on refresh/redirect)
-  useEffect(() => {
-    const saved = localStorage.getItem("admin_product_form_draft");
-    if (saved) {
-      try {
-        const { data, editingId: savedId } = JSON.parse(saved);
-        setFormData(data);
-        setEditingId(savedId);
-        setDialogOpen(true);
-      } catch (e) {
-        console.error("Failed to restore form data", e);
-      }
-    }
-  }, []);
 
   // Save form data to localStorage whenever it changes
   useEffect(() => {
@@ -203,6 +190,7 @@ export default function AdminProductsPage() {
       category: product.category,
       stock: product.stock.toString(),
       image: product.image,
+      images: product.images || [],
       featured: product.featured,
       isArchived: product.isArchived,
     });
@@ -223,6 +211,7 @@ export default function AdminProductsPage() {
       category: "",
       stock: "",
       image: "",
+      images: [],
       featured: false,
       isArchived: false,
     });
@@ -231,7 +220,18 @@ export default function AdminProductsPage() {
   };
 
   const handleOpenDialog = () => {
-    resetForm();
+    const saved = localStorage.getItem("admin_product_form_draft");
+    if (saved) {
+      try {
+        const { data, editingId: savedId } = JSON.parse(saved);
+        setFormData(data);
+        setEditingId(savedId);
+      } catch (e) {
+        resetForm();
+      }
+    } else {
+      resetForm();
+    }
     setDialogOpen(true);
   };
 
@@ -274,7 +274,10 @@ export default function AdminProductsPage() {
       {/* Add/Edit Modal */}
       <Dialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          // Removed resetForm() to prevent data loss during photo upload
+        }}
         title={editingId ? "Edit Product" : "Add Product"}
         onConfirm={handleSubmit}
         confirmText={editingId ? "Update" : "Create"}
@@ -333,11 +336,13 @@ export default function AdminProductsPage() {
             onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
             required
           />
+
+          {/* Main Image */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Product Image</label>
+            <label className="text-sm font-medium">Main Product Image</label>
             <div className="flex gap-2">
               <Input
-                placeholder="Image URL"
+                placeholder="Main Image URL"
                 type="url"
                 value={formData.image}
                 onChange={(e) => setFormData({ ...formData, image: e.target.value })}
@@ -348,7 +353,14 @@ export default function AdminProductsPage() {
                 uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
                 onSuccess={(result: any) => {
                   if (result.info?.secure_url) {
-                    setFormData({ ...formData, image: result.info.secure_url });
+                    setFormData((prev) => {
+                      const newData = { ...prev, image: result.info.secure_url };
+                      localStorage.setItem(
+                        "admin_product_form_draft",
+                        JSON.stringify({ data: newData, editingId })
+                      );
+                      return newData;
+                    });
                   }
                 }}
               >
@@ -357,7 +369,6 @@ export default function AdminProductsPage() {
                     type="button"
                     variant="outline"
                     onClick={() => {
-                      // Save current state before opening widget
                       localStorage.setItem(
                         "admin_product_form_draft",
                         JSON.stringify({ data: formData, editingId })
@@ -373,6 +384,76 @@ export default function AdminProductsPage() {
               </CldUploadWidget>
             </div>
           </div>
+
+          {/* Additional Images */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Additional Images (up to 4)</label>
+            <div className="grid grid-cols-1 gap-2">
+              {formData.images.map((img, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input
+                    placeholder={`Image ${index + 1} URL`}
+                    type="url"
+                    value={img}
+                    onChange={(e) => {
+                      const newImages = [...formData.images];
+                      newImages[index] = e.target.value;
+                      setFormData({ ...formData, images: newImages });
+                    }}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const newImages = formData.images.filter((_, i) => i !== index);
+                      setFormData({ ...formData, images: newImages });
+                    }}
+                    className="text-destructive"
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              {formData.images.length < 4 && (
+                <CldUploadWidget
+                  uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
+                  onSuccess={(result: any) => {
+                    if (result.info?.secure_url) {
+                      setFormData((prev) => {
+                        const newImages = [...prev.images, result.info.secure_url];
+                        const newData = { ...prev, images: newImages };
+                        localStorage.setItem(
+                          "admin_product_form_draft",
+                          JSON.stringify({ data: newData, editingId })
+                        );
+                        return newData;
+                      });
+                    }
+                  }}
+                >
+                  {({ open }) => (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        localStorage.setItem(
+                          "admin_product_form_draft",
+                          JSON.stringify({ data: formData, editingId })
+                        );
+                        open();
+                      }}
+                      className="gap-2 w-full"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Additional Image
+                    </Button>
+                  )}
+                </CldUploadWidget>
+              )}
+            </div>
+          </div>
+
           <label className="flex items-center gap-2">
             <input
               type="checkbox"

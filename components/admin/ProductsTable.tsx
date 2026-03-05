@@ -14,6 +14,7 @@ interface Product {
   category: string;
   stock: number;
   image: string;
+  images: string[];
   featured: boolean;
   isArchived: boolean;
   currency: string;
@@ -51,7 +52,7 @@ export default function ProductsTable({
             >
               <td className="px-6 py-4">
                 <div className="flex items-center gap-2">
-                  {product.name}
+                  {product.name.length > 45 ? `${product.name.substring(0, 45)}...` : product.name}
                   {product.isArchived && (
                     <span className="px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 rounded-full">
                       Archived

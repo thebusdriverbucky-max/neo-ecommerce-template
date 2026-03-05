@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
         price: body.price,
         currency: currency,
         image: body.image,
+        images: body.images || [],
         category: body.category,
         stock: body.stock,
         featured: body.featured,

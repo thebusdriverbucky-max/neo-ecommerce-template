@@ -39,7 +39,7 @@ export async function PUT(
 
   try {
     const body = await request.json();
-    const { name, slug, description, price, currency, image, category, stock, featured } =
+    const { name, slug, description, price, currency, image, images, category, stock, featured } =
       body;
 
     const updatedProduct = await db.product.update({
@@ -51,6 +51,7 @@ export async function PUT(
         price,
         currency,
         image,
+        images: images || [],
         category,
         stock,
         featured,
