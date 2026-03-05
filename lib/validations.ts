@@ -10,6 +10,7 @@ export const productSchema = z.object({
   category: z.string().min(1, "Category is required"),
   stock: z.coerce.number().nonnegative("Stock cannot be negative"),
   image: z.string().url("Invalid image URL"),
+  images: z.array(z.string().url("Invalid image URL")).default([]),
   featured: z.boolean().default(false),
 });
 
@@ -19,15 +20,16 @@ export const addressSchema = z.object({
   email: z.string().email("Invalid email"),
   phone: z.string()
     .min(5, "Phone number is too short")
-    .max(30, "Phone number is too long"),
+    .max(25, "Phone number is too long")
+    .regex(/^[\+]?[\d\s\-\(\)]{5,25}$/, "Invalid phone number format"),
   street: z.string().min(1, "Street is required"),
   city: z.string()
-    .min(2, "City name must be at least 2 characters")
+    .min(1, "City name is required")
     .max(100, "City name is too long"),
   state: z.string().default(""),
   postalCode: z.string()
-    .min(2, "Postal code is too short")
-    .max(20, "Postal code is too long"),
+    .min(1, "Postal code is required")
+    .max(15, "Postal code is too long"),
   country: z.string().min(1, "Country is required"),
   isDefault: z.boolean().default(false),
 }).superRefine((data, ctx) => {
@@ -48,14 +50,14 @@ export type AddressInput = z.infer<typeof addressSchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 
 export const orderItemSchema = z.object({
-  productId: z.string().min(1),
+  productId: z.string().cuid(),
   quantity: z.number().int().positive().min(1).max(100),
-  price: z.number().nonnegative(),
+  price: z.number().positive(),
 });
 
 export const createOrderSchema = z.object({
   items: z.array(orderItemSchema).min(1).max(50),
-  total: z.number().nonnegative().max(1000000), // Максимальная сумма заказа 1,000,000
+  total: z.number().positive().max(1000000), // Максимальная сумма заказа 1,000,000
   shippingAddress: addressSchema.optional(),
   guestEmail: z.string().email().optional(),
 });

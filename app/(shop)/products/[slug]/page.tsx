@@ -9,6 +9,8 @@ import { formatPrice } from "@/lib/utils";
 import { Star } from "lucide-react";
 import { ProductReviews } from "@/components/shop/product-reviews";
 import { WishlistButton } from "@/components/ui/WishlistButton";
+import { ProductDescription } from "@/components/shop/ProductDescription";
+import { ProductGallery } from "@/components/shop/ProductGallery";
 
 export const revalidate = 3600;
 
@@ -70,17 +72,12 @@ export default async function ProductPage({ params }: ProductPageProps) {
     <div className="container mx-auto px-4 py-8">
       {/* Product Details */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-        {/* Product Image */}
-        <div className="flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg h-96">
-          <Image
-            src={product.image}
-            alt={product.name}
-            width={500}
-            height={500}
-            className="object-cover w-full h-full rounded-lg"
-            priority
-          />
-        </div>
+        {/* Product Image / Gallery */}
+        <ProductGallery
+          mainImage={product.image}
+          images={product.images as string[]}
+          alt={product.name}
+        />
 
         {/* Product Info */}
         <div className="space-y-6">
@@ -88,13 +85,13 @@ export default async function ProductPage({ params }: ProductPageProps) {
             <p className="text-sm text-gray-500 dark:text-gray-400">
               {product.category}
             </p>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white break-words whitespace-pre-wrap">
               {product.name}
             </h1>
           </div>
-          <p className="text-lg text-gray-700 dark:text-gray-300">
-            {product.description}
-          </p>
+
+          <ProductDescription description={product.description} />
+
           <p className="text-xl font-semibold text-gray-900 dark:text-white">
             {formatPrice(product.price, product.currency)}
           </p>

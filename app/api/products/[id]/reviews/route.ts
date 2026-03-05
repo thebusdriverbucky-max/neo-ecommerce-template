@@ -89,3 +89,53 @@ export async function POST(
     return new NextResponse("Internal Error", { status: 500 });
   }
 }
+
+export async function DELETE(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await auth();
+
+    if (!session?.user || session.user.role !== "ADMIN") {
+      return new NextResponse("Unauthorized", { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const reviewId = searchParams.get("reviewId");
+
+    if (!reviewId) {
+      return new NextResponse("Review ID is required", { status: 400 });
+    }
+
+    await db.review.delete({
+      where: {
+        id: reviewId,
+      },
+    });
+
+    // Update product rating
+    const reviews = await db.review.findMany({
+      where: {
+        productId: params.id,
+      },
+    });
+
+    const totalRating = reviews.reduce((acc: number, review: any) => acc + review.rating, 0);
+    const averageRating = reviews.length > 0 ? totalRating / reviews.length : 0;
+
+    await db.product.update({
+      where: {
+        id: params.id,
+      },
+      data: {
+        rating: averageRating,
+      },
+    });
+
+    return new NextResponse(null, { status: 204 });
+  } catch (error) {
+    console.error("[REVIEWS_DELETE]", error);
+    return new NextResponse("Internal Error", { status: 500 });
+  }
+}
