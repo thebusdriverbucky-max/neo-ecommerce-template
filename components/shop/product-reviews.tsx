@@ -218,7 +218,7 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
                   />
                 ))}
               </div>
-              <p className="text-gray-700 dark:text-gray-300">{review.comment}</p>
+              <p className="text-gray-700 dark:text-gray-300 break-words whitespace-pre-wrap overflow-hidden">{review.comment}</p>
             </div>
           ))
         )}
