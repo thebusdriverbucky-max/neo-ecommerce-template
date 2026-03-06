@@ -25,10 +25,6 @@ export interface StoreSettingsData {
   faviconUrl?: string;
   ogImageUrl?: string;
   siteLang?: string;
-  paymentIban?: string;
-  paymentBankName?: string;
-  paymentAccountName?: string;
-  paymentDetails?: string;
 }
 
 export async function getSettings() {
@@ -56,9 +52,8 @@ export async function getSettings() {
 
 export async function updateSettings(data: StoreSettingsData) {
   try {
-    console.log('Updating settings with data:', JSON.stringify(data, null, 2));
     const settings = await prisma.storeSettings.findFirst();
-    const currencyChanged = data.currency !== undefined && settings?.currency !== data.currency;
+    const currencyChanged = settings?.currency !== data.currency;
 
     await prisma.$transaction(async (tx) => {
       if (settings) {
@@ -86,10 +81,6 @@ export async function updateSettings(data: StoreSettingsData) {
             faviconUrl: data.faviconUrl,
             ogImageUrl: data.ogImageUrl,
             siteLang: data.siteLang,
-            paymentIban: data.paymentIban,
-            paymentBankName: data.paymentBankName,
-            paymentAccountName: data.paymentAccountName,
-            paymentDetails: data.paymentDetails,
           },
         });
       } else {
@@ -116,10 +107,6 @@ export async function updateSettings(data: StoreSettingsData) {
             faviconUrl: data.faviconUrl,
             ogImageUrl: data.ogImageUrl,
             siteLang: data.siteLang,
-            paymentIban: data.paymentIban,
-            paymentBankName: data.paymentBankName,
-            paymentAccountName: data.paymentAccountName,
-            paymentDetails: data.paymentDetails,
           },
         });
       }
@@ -134,10 +121,10 @@ export async function updateSettings(data: StoreSettingsData) {
       }
     });
 
-    revalidatePath('/admin/settings');
+    revalidatePath('/', 'layout');
     return { success: true };
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error updating settings:', error);
-    return { success: false, error: error.message || 'Failed to update settings' };
+    return { success: false, error: 'Failed to update settings' };
   }
 }

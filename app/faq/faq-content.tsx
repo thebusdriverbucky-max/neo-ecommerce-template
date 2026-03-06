@@ -32,12 +32,12 @@ const faqs: FAQItem[] = [
   {
     question: 'What payment methods do you accept?',
     answer:
-      'We accept all major credit cards (Visa, Mastercard, American Express), Apple Pay, Google Pay, and PayPal.',
+      'We accept all major credit cards (Visa, Mastercard, American Express), Apple Pay, Google Pay, and PayPal through our secure Stripe payment processor.',
   },
   {
     question: 'Is my payment information secure?',
     answer:
-      'Yes. We use secure payment processing, which is PCI-DSS compliant. We never store credit card information on our servers.',
+      'Yes. We use Stripe for payment processing, which is PCI-DSS compliant. We never store credit card information on our servers.',
   },
   {
     question: 'Can I cancel my order?',

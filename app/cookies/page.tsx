@@ -64,6 +64,7 @@ export default function CookiesPage() {
             We use third-party services that may set their own cookies:
           </p>
           <ul className="list-disc list-inside space-y-2 text-gray-700 dark:text-gray-300 mt-3">
+            <li><strong>Stripe:</strong> Payment processing</li>
             <li><strong>Google Analytics:</strong> Website analytics</li>
             <li><strong>NextAuth:</strong> Authentication</li>
           </ul>
