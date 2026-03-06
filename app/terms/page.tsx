@@ -19,7 +19,7 @@ export default async function TermsPage() {
     <div className="container mx-auto px-4 py-8 max-w-4xl">
       <h1 className="text-4xl font-bold mb-6">Terms of Service</h1>
       <p className="text-gray-600 dark:text-gray-400 mb-4">
-        Last updated: {new Date().toLocaleDateString()}
+        Last updated: {new Date().toLocaleDateString("en-US")}
       </p>
 
       <div className="prose dark:prose-invert max-w-none space-y-6">

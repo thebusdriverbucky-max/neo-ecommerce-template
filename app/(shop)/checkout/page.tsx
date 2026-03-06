@@ -36,7 +36,7 @@ export default function CheckoutPage() {
           billingAddressId: formData.billingAddressId,
           total: getTotalPrice(),
           discountCode: discount?.code,
-          guestEmail: !session ? formData.shippingAddress.email : undefined,
+          guestEmail: formData.shippingAddress.email,
         }),
       });
 

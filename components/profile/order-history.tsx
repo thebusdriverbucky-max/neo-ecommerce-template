@@ -59,7 +59,7 @@ export default function OrderHistory({ orders }: OrderHistoryProps) {
                       </Link>
                     </td>
                     <td className="py-2 px-4 border-b">
-                      {new Date(order.createdAt).toLocaleDateString()}
+                      {new Date(order.createdAt).toLocaleDateString("en-US")}
                     </td>
                     <td className="py-2 px-4 border-b">
                       {formatPrice(order.total, (order as any).currency)}
