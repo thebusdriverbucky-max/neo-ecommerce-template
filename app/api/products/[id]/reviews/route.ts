@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { revalidatePath } from "next/cache";
 
 export async function GET(
   req: Request,
@@ -83,6 +84,9 @@ export async function POST(
       },
     });
 
+    revalidatePath(`/products/${params.id}`);
+    revalidatePath("/products");
+
     return NextResponse.json(review);
   } catch (error) {
     console.error("[REVIEWS_POST]", error);
@@ -132,6 +136,9 @@ export async function DELETE(
         rating: averageRating,
       },
     });
+
+    revalidatePath(`/products/${params.id}`);
+    revalidatePath("/products");
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {

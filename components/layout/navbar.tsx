@@ -11,9 +11,11 @@ import { ShoppingCart, User, Menu, X, Sun, Moon, Heart } from "lucide-react";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useTheme } from "next-themes";
+import { getSettings, StoreSettingsData } from "@/app/actions/settings";
 
 export function Navbar() {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+  const [settings, setSettings] = useState<StoreSettingsData | null>(null);
+  const storeName = settings?.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
   const pathname = usePathname();
   const { data: session } = useSession();
   const { getTotalItems } = useCart();
@@ -26,6 +28,13 @@ export function Navbar() {
 
   useEffect(() => {
     setMounted(true);
+    const fetchSettings = async () => {
+      const result = await getSettings();
+      if (result.success && result.data) {
+        setSettings(result.data as unknown as StoreSettingsData);
+      }
+    };
+    fetchSettings();
   }, []);
 
   // Close user menu when clicking outside

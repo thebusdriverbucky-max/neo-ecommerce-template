@@ -39,14 +39,10 @@ async function handleOrderCancellation(orderId: string) {
       });
     }
   });
-
-  console.log(`Order ${orderId} cancelled and stock returned`);
 }
 
 export async function confirmOrder(orderId: string, paymentIntentId: string, storeSettings: any) {
-  console.log(`🔄 Confirming order: ${orderId}, paymentIntent: ${paymentIntentId}`);
   if (!orderId) {
-    console.error("❌ No orderId provided to confirmOrder");
     return;
   }
 
@@ -60,16 +56,12 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
         },
       });
 
-      console.log(`🔍 Order found in DB:`, order ? { id: order.id, status: order.status } : "NOT FOUND");
-
       // If order doesn't exist or is already confirmed, do nothing.
       if (!order || order.status === "CONFIRMED") {
-        console.log(`Order ${orderId} already confirmed or not found, skipping.`);
         return null;
       }
 
       // 1. Update stock for each item
-      console.log(`📉 Updating stock for ${order.items.length} items`);
       for (const item of order.items) {
         await tx.product.update({
           where: { id: item.productId },
@@ -82,7 +74,6 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
       }
 
       // 2. Update order status to CONFIRMED
-      console.log(`✅ Updating order status to CONFIRMED`);
       return tx.order.update({
         where: { id: orderId },
         data: {
@@ -100,11 +91,9 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
     });
 
     if (updatedOrder) {
-      console.log(`🎉 Order ${orderId} successfully confirmed in DB`);
       const customerEmail = (updatedOrder as any).user?.email ?? (updatedOrder as any).guestEmail ?? null;
 
       if (customerEmail) {
-        console.log(`📧 Sending confirmation to: ${customerEmail}`);
         const orderData = {
           orderNumber: (updatedOrder as any).orderNumber || `ORD-${updatedOrder.id.slice(0, 8).toUpperCase()}`,
           orderId: updatedOrder.id,
@@ -121,8 +110,7 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
         };
 
         try {
-          const result = await sendOrderConfirmationEmail(customerEmail, orderData);
-          console.log(`📧 Confirmation result:`, result);
+          await sendOrderConfirmationEmail(customerEmail, orderData);
         } catch (emailError) {
           console.error(`Failed to send confirmation email for order ${orderId}:`, emailError);
         }
@@ -139,7 +127,6 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
           console.error(`Failed to send new order notification for order ${orderId}:`, emailError);
         }
       }
-      console.log(`Order ${orderId} confirmed with payment ${paymentIntentId}`);
     }
   } catch (error) {
     console.error(`❌ Error in confirmOrder for order ${orderId}:`, error);
@@ -155,16 +142,10 @@ async function handlePaymentIntentFailed(
 }
 
 export async function POST(request: NextRequest) {
-  console.log("Webhook received", {
-    url: request.url,
-    headers: Object.fromEntries(request.headers.entries()),
-  });
   const body = await request.text();
-  console.log("RAW BODY RECEIVED, length:", body.length);
   const signature = request.headers.get("stripe-signature") || "";
 
   if (!webhookSecret) {
-    console.error("STRIPE_WEBHOOK_SECRET not configured");
     return NextResponse.json(
       { error: "Webhook not configured" },
       { status: 500 }
@@ -175,9 +156,7 @@ export async function POST(request: NextRequest) {
 
   try {
     event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-    console.log("WEBHOOK RECEIVED", { type: event.type, id: event.id });
   } catch (error) {
-    console.error("Webhook signature verification failed:", error instanceof Error ? error.message : error);
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
@@ -189,18 +168,10 @@ export async function POST(request: NextRequest) {
         const paymentIntentId = session.payment_intent as string;
         const sessionId = session.id;
 
-        console.log("🔔 Webhook: checkout.session.completed", {
-          orderId,
-          paymentIntentId,
-          sessionId,
-          metadata: session.metadata
-        });
-
         if (orderId) {
           const settings = await db.storeSettings.findFirst();
           await confirmOrder(orderId, paymentIntentId || sessionId, settings);
         } else {
-          console.warn("⚠️ No orderId in session metadata, trying to find by sessionId or paymentIntentId");
           const order = await db.order.findFirst({
             where: {
               OR: [
@@ -211,11 +182,8 @@ export async function POST(request: NextRequest) {
           });
 
           if (order) {
-            console.log(`✅ Found order ${order.id} by Stripe ID`);
             const settings = await db.storeSettings.findFirst();
             await confirmOrder(order.id, paymentIntentId || sessionId, settings);
-          } else {
-            console.error("❌ Could not find order for checkout.session.completed");
           }
         }
         break;
@@ -224,27 +192,17 @@ export async function POST(request: NextRequest) {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
         const orderId = paymentIntent.metadata.orderId;
 
-        console.log("🔔 Webhook: payment_intent.succeeded", {
-          orderId,
-          paymentIntentId: paymentIntent.id,
-          metadata: paymentIntent.metadata
-        });
-
         if (orderId) {
           const settings = await db.storeSettings.findFirst();
           await confirmOrder(orderId, paymentIntent.id, settings);
         } else {
-          console.warn("⚠️ No orderId in payment_intent metadata, trying to find by paymentIntentId");
           // Try to find order by stripePaymentIntentId if not in metadata
           const order = await db.order.findFirst({
             where: { stripePaymentIntentId: paymentIntent.id } as any
           });
           if (order) {
-            console.log(`✅ Found order ${order.id} by paymentIntentId`);
             const settings = await db.storeSettings.findFirst();
             await confirmOrder(order.id, paymentIntent.id, settings);
-          } else {
-            console.error("❌ Could not find order for payment_intent.succeeded");
           }
         }
         break;

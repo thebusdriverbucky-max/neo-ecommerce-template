@@ -45,12 +45,9 @@ export async function POST(request: NextRequest) {
     // Zod Validation
     let validatedData;
     try {
-      console.log("Validating body:", JSON.stringify(body, null, 2));
       validatedData = createOrderSchema.parse(body);
-      console.log("Validation successful");
     } catch (error) {
       if (error instanceof z.ZodError) {
-        console.error("❌ Zod Validation Error:", error.issues);
         return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
       }
       throw error;
@@ -59,13 +56,6 @@ export async function POST(request: NextRequest) {
     const { items, shippingAddress, guestEmail } = validatedData;
     const { billingAddressId, discountCode, shippingAddressId: bodyShippingAddressId } = body;
 
-    console.log("Order data received:", {
-      itemCount: items.length,
-      hasShippingAddress: !!shippingAddress,
-      shippingAddressId: bodyShippingAddressId,
-      guestEmail
-    });
-
     if (!dbUserId && !guestEmail) {
       return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
     }
@@ -73,7 +63,7 @@ export async function POST(request: NextRequest) {
     // Fetch store settings
     const storeSettings = await db.storeSettings.findFirst();
     const taxRate = storeSettings?.taxRate ?? 0;
-    const freeShippingThreshold = Infinity;
+    const freeShippingThreshold = storeSettings?.freeShippingThreshold ?? 500;
     const storeCurrency = storeSettings?.currency || "USD";
 
     // Fetch products to get real prices and check stock
@@ -128,15 +118,11 @@ export async function POST(request: NextRequest) {
     const shipping = shippingCost;
     const finalTotal = total + tax + shipping;
 
-    console.log("📦 ORDER CREATION STARTED", { dbUserId });
-
     // Transaction for atomic order creation and stock update
     const order = await db.$transaction(async (tx) => {
       let finalShippingAddressId = bodyShippingAddressId || null;
-      console.log("🔍 Initial shippingAddressId:", finalShippingAddressId);
 
       if (shippingAddress) {
-        console.log("🏠 Creating new shipping address...");
         const newAddress = await tx.address.create({
           data: {
             ...shippingAddress,
@@ -145,28 +131,17 @@ export async function POST(request: NextRequest) {
           } as any,
         });
         finalShippingAddressId = newAddress.id;
-        console.log("✅ New shipping address created:", finalShippingAddressId);
       }
 
       // Generate order number
       let orderNumber;
       try {
         orderNumber = await generateOrderNumber();
-        console.log("🔢 GENERATED ORDER NUMBER:", orderNumber);
       } catch (err) {
-        console.error("❌ ERROR GENERATING ORDER NUMBER:", err);
         throw new Error("Failed to generate order number");
       }
 
       // Create order
-      console.log("📝 CREATING ORDER IN DB", {
-        userId: dbUserId,
-        orderNumber,
-        finalTotal,
-        shippingAddressId: finalShippingAddressId,
-        billingAddressId
-      });
-
       const orderData: any = {
         orderNumber: orderNumber,
         status: "PENDING",
@@ -193,12 +168,9 @@ export async function POST(request: NextRequest) {
       }
 
       const newOrder = await tx.order.create({ data: orderData });
-      console.log("✅ Order created in DB:", newOrder.id);
 
       return newOrder;
     });
-
-    console.log("🎉 ORDER TRANSACTION COMPLETED SUCCESSFULLY", order.id);
 
     // Check for low stock after transaction (best effort)
     // Use Promise.allSettled to ensure email failures don't block the process
@@ -272,7 +244,6 @@ export async function POST(request: NextRequest) {
 
     let stripeSession;
     try {
-      console.log("Creating Stripe session...");
       stripeSession = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         line_items,
@@ -304,13 +275,7 @@ export async function POST(request: NextRequest) {
         ] : undefined,
       });
 
-      console.log("Stripe session created:", {
-        sessionId: stripeSession.id,
-        paymentIntentId: stripeSession.payment_intent
-      });
-
       const stripeIdToSave = (stripeSession.payment_intent as string) || stripeSession.id;
-      console.log(`Saving Stripe ID to order ${order.id}: ${stripeIdToSave}`);
 
       await db.order.update({
         where: { id: order.id },
@@ -407,8 +372,6 @@ export async function GET(request: NextRequest) {
         createdAt: "desc",
       },
     });
-
-    console.log("✅ Orders fetched:", orders.length); // Для дебага
 
     return NextResponse.json(orders);
   } catch (error) {

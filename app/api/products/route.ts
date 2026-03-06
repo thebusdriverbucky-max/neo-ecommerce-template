@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 
 export async function GET(request: NextRequest) {
   try {
@@ -70,6 +71,9 @@ export async function POST(request: NextRequest) {
         featured: body.featured,
       },
     });
+
+    revalidatePath("/products");
+    revalidatePath("/");
 
     return NextResponse.json(product, { status: 201 });
   } catch (error) {

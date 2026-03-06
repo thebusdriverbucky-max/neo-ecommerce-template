@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { revalidatePath } from "next/cache";
 
 export async function GET(
   request: NextRequest,
@@ -58,6 +59,10 @@ export async function PUT(
       },
     });
 
+    revalidatePath("/products");
+    revalidatePath(`/products/${updatedProduct.slug}`);
+    revalidatePath("/");
+
     return NextResponse.json(updatedProduct);
   } catch (error) {
     console.error("Product update error:", error);
@@ -92,6 +97,8 @@ export async function DELETE(
         where: { id: params.id },
         data: { isArchived: true },
       });
+      revalidatePath("/products");
+      revalidatePath("/");
       return NextResponse.json({ message: "Product archived" }, { status: 200 });
     }
   } catch (error) {

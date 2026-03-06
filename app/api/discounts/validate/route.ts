@@ -47,16 +47,8 @@ export async function POST(request: NextRequest) {
       const expirationDate = new Date(discount.expiresAt);
       // Устанавливаем время истечения на конец дня (23:59:59.999)
       expirationDate.setHours(23, 59, 59, 999);
-      
+
       const now = new Date();
-      
-      console.log("Discount Validation Debug:", {
-        code: discount.code,
-        expiresAtDB: discount.expiresAt,
-        expiresAtParsed: expirationDate.toISOString(),
-        now: now.toISOString(),
-        isExpired: expirationDate.getTime() < now.getTime()
-      });
 
       // Check if the discount code has expired
       // We compare timestamps to ensure accurate comparison regardless of timezones

@@ -39,8 +39,6 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
 
   // Fallback logic: if we are on success page but order is still PENDING, check Stripe
   if (isSuccess && order.status === "PENDING") {
-    console.log(`[FALLBACK] Checking Stripe status for order ${order.id} because it is still PENDING on success page`);
-
     try {
       // We need to find the Stripe session or payment intent
       // In our system, we store it in stripePaymentIntentId
@@ -66,12 +64,11 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
         }
 
         if (isPaid) {
-          console.log(`[FALLBACK] Order ${order.id} is paid in Stripe. Manually confirming...`);
           const settings = await db.storeSettings.findFirst();
           await confirmOrder(order.id, paymentIntentId, settings);
 
           // Refresh order data after confirmation
-          order = await db.order.findUnique({
+          const updatedOrder = await db.order.findUnique({
             where: { id: params.id },
             include: {
               items: {
@@ -82,8 +79,9 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
               shippingAddress: true,
             },
           });
-        } else {
-          console.log(`[FALLBACK] Order ${order.id} is NOT paid in Stripe yet (status: ${stripeId})`);
+          if (updatedOrder) {
+            order = updatedOrder;
+          }
         }
       }
     } catch (error) {

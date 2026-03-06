@@ -121,7 +121,7 @@ export async function updateSettings(data: StoreSettingsData) {
       }
     });
 
-    revalidatePath('/admin/settings');
+    revalidatePath('/', 'layout');
     return { success: true };
   } catch (error) {
     console.error('Error updating settings:', error);

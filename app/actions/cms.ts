@@ -40,7 +40,7 @@ export async function updatePage(id: string, data: Partial<ContentPageData>) {
       where: { id },
       data,
     });
-    revalidatePath('/admin/settings');
+    revalidatePath('/', 'layout');
     return { success: true };
   } catch (error) {
     console.error('Error updating page:', error);
@@ -53,7 +53,7 @@ export async function createPage(data: ContentPageData) {
     await prisma.contentPage.create({
       data,
     });
-    revalidatePath('/admin/settings');
+    revalidatePath('/', 'layout');
     return { success: true };
   } catch (error) {
     console.error('Error creating page:', error);
@@ -67,7 +67,7 @@ export async function togglePageVisibility(id: string, isVisible: boolean) {
       where: { id },
       data: { isVisible },
     });
-    revalidatePath('/admin/settings');
+    revalidatePath('/', 'layout');
     return { success: true };
   } catch (error) {
     console.error('Error toggling page visibility:', error);
