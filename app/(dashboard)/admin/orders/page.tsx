@@ -19,6 +19,13 @@ interface Order {
   shippingAddress?: {
     firstName: string;
     lastName: string;
+    email: string;
+    phone: string;
+    street: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country: string;
   } | null;
   status: string;
   total: string | number;
@@ -252,6 +259,28 @@ export default function AdminOrdersPage() {
                 </div>
               )}
             </div>
+
+            {selectedOrder.shippingAddress && (
+              <div>
+                <p className="text-xs text-gray-500 uppercase mb-2">Shipping Address</p>
+                <div className="text-sm space-y-1 bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+                  <p className="font-medium">
+                    {selectedOrder.shippingAddress.firstName} {selectedOrder.shippingAddress.lastName}
+                  </p>
+                  <p>{selectedOrder.shippingAddress.street}</p>
+                  <p>
+                    {selectedOrder.shippingAddress.city}, {selectedOrder.shippingAddress.state} {selectedOrder.shippingAddress.postalCode}
+                  </p>
+                  <p>{selectedOrder.shippingAddress.country}</p>
+                  {selectedOrder.shippingAddress.phone && (
+                    <p className="text-gray-500">📞 {selectedOrder.shippingAddress.phone}</p>
+                  )}
+                  {selectedOrder.shippingAddress.email && (
+                    <p className="text-gray-500">✉️ {selectedOrder.shippingAddress.email}</p>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div>
               <p className="text-xs text-gray-500 uppercase mb-2">Items</p>

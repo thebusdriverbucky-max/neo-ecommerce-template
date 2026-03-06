@@ -11,11 +11,11 @@ interface ProductDescriptionProps {
 
 export function ProductDescription({ description }: ProductDescriptionProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const shouldTruncate = description.length > 750;
+  const shouldTruncate = description.length > 600;
 
   const displayedDescription = isExpanded || !shouldTruncate
     ? description
-    : description.slice(0, 750) + "...";
+    : description.slice(0, 600) + "...";
 
   return (
     <div className="space-y-4">

@@ -353,6 +353,13 @@ export async function GET(request: NextRequest) {
           select: {
             firstName: true,
             lastName: true,
+            email: true,
+            phone: true,
+            street: true,
+            city: true,
+            state: true,
+            postalCode: true,
+            country: true,
           },
         },
         items: {
