@@ -7,18 +7,36 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatPrice(price: number | string | any, currency?: string): string {
+const CURRENCY_RULES: Record<string, { symbol: string; position: "before" | "after" }> = {
+  USD: { symbol: "$", position: "before" },
+  EUR: { symbol: "€", position: "after" },
+  GBP: { symbol: "£", position: "before" },
+  CAD: { symbol: "CA$", position: "before" },
+  AUD: { symbol: "A$", position: "before" },
+  UAH: { symbol: "₴", position: "after" },
+};
+
+export function formatPrice(price: number | string | any, currency: string = "USD"): string {
   const numPrice = parseFloat(String(price));
-  const displayCurrency = currency || "USD";
-  try {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: displayCurrency,
-    }).format(numPrice);
-  } catch (error) {
-    console.error("Error formatting price:", error);
-    return `${displayCurrency} ${numPrice.toFixed(2)}`;
+
+  if (isNaN(numPrice)) {
+    return "0.00";
   }
+
+  const formattedNumber = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numPrice);
+
+  const rule = CURRENCY_RULES[currency.toUpperCase()];
+
+  if (rule) {
+    return rule.position === "before"
+      ? `${rule.symbol}${formattedNumber}`
+      : `${formattedNumber}${rule.symbol}`;
+  }
+
+  return `${currency.toUpperCase()} ${formattedNumber}`;
 }
 
 export function formatDate(date: Date): string {
