@@ -42,7 +42,7 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
     try {
       // We need to find the Stripe session or payment intent
       // In our system, we store it in stripePaymentIntentId
-      const stripeId = (order as any).stripePaymentIntentId;
+      const stripeId = order.stripePaymentIntentId;
 
       if (stripeId) {
         let isPaid = false;

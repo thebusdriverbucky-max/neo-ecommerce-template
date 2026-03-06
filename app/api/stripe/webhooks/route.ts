@@ -79,7 +79,7 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
         data: {
           status: "CONFIRMED",
           stripePaymentIntentId: paymentIntentId,
-        } as any,
+        },
         include: {
           user: true,
           items: {
@@ -175,9 +175,9 @@ export async function POST(request: NextRequest) {
           const order = await db.order.findFirst({
             where: {
               OR: [
-                { stripePaymentIntentId: sessionId },
-                { stripePaymentIntentId: paymentIntentId }
-              ].filter(Boolean) as any[]
+                sessionId ? { stripePaymentIntentId: sessionId } : null,
+                paymentIntentId ? { stripePaymentIntentId: paymentIntentId } : null
+              ].filter((item): item is { stripePaymentIntentId: string } => item !== null)
             }
           });
 
@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
         } else {
           // Try to find order by stripePaymentIntentId if not in metadata
           const order = await db.order.findFirst({
-            where: { stripePaymentIntentId: paymentIntent.id } as any
+            where: { stripePaymentIntentId: paymentIntent.id }
           });
           if (order) {
             const settings = await db.storeSettings.findFirst();
@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
         const charge = event.data.object as Stripe.Charge;
         if (charge.payment_intent) {
           const order = await db.order.findFirst({
-            where: { stripePaymentIntentId: charge.payment_intent as string } as any,
+            where: { stripePaymentIntentId: charge.payment_intent as string },
           });
 
           if (order) {

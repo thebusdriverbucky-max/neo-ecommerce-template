@@ -279,7 +279,7 @@ export async function POST(request: NextRequest) {
 
       await db.order.update({
         where: { id: order.id },
-        data: { stripePaymentIntentId: stripeIdToSave } as any,
+        data: { stripePaymentIntentId: stripeIdToSave },
       });
     } catch (stripeError: any) {
       console.error("❌ Stripe Session Creation Failed:", {
