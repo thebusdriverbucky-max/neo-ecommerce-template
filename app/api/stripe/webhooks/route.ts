@@ -1,47 +1,15 @@
 // File: app/api/stripe/webhooks/route.ts
 
-import { stripe } from "@/lib/stripe";
 import { db } from "@/lib/db";
-import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
 import { sendOrderConfirmationEmail, sendNewOrderNotificationEmail } from "@/lib/email";
 
 export const dynamic = 'force-dynamic';
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
-
-async function handleOrderCancellation(orderId: string) {
-  if (!orderId) return;
-
-  const order = await db.order.findUnique({
-    where: { id: orderId },
-    include: { items: true },
-  });
-
-  if (!order || order.status === "CANCELLED") return;
-
-  await db.$transaction(async (tx) => {
-    // Update order status
-    await tx.order.update({
-      where: { id: orderId },
-      data: { status: "CANCELLED" },
-    });
-
-    // Return stock
-    for (const item of order.items) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: {
-          stock: {
-            increment: item.quantity,
-          },
-        },
-      });
-    }
-  });
+export async function POST() {
+  return new Response("Stripe webhooks are disabled in LITE version", { status: 404 });
 }
 
-export async function confirmOrder(orderId: string, paymentIntentId: string, storeSettings: any) {
+async function confirmOrder(orderId: string, paymentIntentId: string | null, storeSettings: any) {
   if (!orderId) {
     return;
   }
@@ -131,119 +99,5 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
   } catch (error) {
     console.error(`❌ Error in confirmOrder for order ${orderId}:`, error);
     throw error;
-  }
-}
-
-async function handlePaymentIntentFailed(
-  paymentIntent: Stripe.PaymentIntent
-) {
-  const orderId = paymentIntent.metadata.orderId;
-  await handleOrderCancellation(orderId);
-}
-
-export async function POST(request: NextRequest) {
-  const body = await request.text();
-  const signature = request.headers.get("stripe-signature") || "";
-
-  if (!webhookSecret) {
-    return NextResponse.json(
-      { error: "Webhook not configured" },
-      { status: 500 }
-    );
-  }
-
-  let event: Stripe.Event;
-
-  try {
-    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
-  } catch (error) {
-    return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
-  }
-
-  try {
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const orderId = session.metadata?.orderId;
-        const paymentIntentId = session.payment_intent as string;
-        const sessionId = session.id;
-
-        if (orderId) {
-          const settings = await db.storeSettings.findFirst();
-          await confirmOrder(orderId, paymentIntentId || sessionId, settings);
-        } else {
-          const order = await db.order.findFirst({
-            where: {
-              OR: [
-                { stripePaymentIntentId: sessionId },
-                { stripePaymentIntentId: paymentIntentId }
-              ].filter(Boolean) as any[]
-            }
-          });
-
-          if (order) {
-            const settings = await db.storeSettings.findFirst();
-            await confirmOrder(order.id, paymentIntentId || sessionId, settings);
-          }
-        }
-        break;
-      }
-      case "payment_intent.succeeded": {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        const orderId = paymentIntent.metadata.orderId;
-
-        if (orderId) {
-          const settings = await db.storeSettings.findFirst();
-          await confirmOrder(orderId, paymentIntent.id, settings);
-        } else {
-          // Try to find order by stripePaymentIntentId if not in metadata
-          const order = await db.order.findFirst({
-            where: { stripePaymentIntentId: paymentIntent.id } as any
-          });
-          if (order) {
-            const settings = await db.storeSettings.findFirst();
-            await confirmOrder(order.id, paymentIntent.id, settings);
-          }
-        }
-        break;
-      }
-      case "payment_intent.payment_failed": {
-        const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        await handlePaymentIntentFailed(paymentIntent);
-        break;
-      }
-      case "checkout.session.expired": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const orderId = session.metadata?.orderId;
-        if (orderId) {
-          await handleOrderCancellation(orderId);
-        }
-        break;
-      }
-      case "charge.refunded": {
-        const charge = event.data.object as Stripe.Charge;
-        if (charge.payment_intent) {
-          const order = await db.order.findFirst({
-            where: { stripePaymentIntentId: charge.payment_intent as string } as any,
-          });
-
-          if (order) {
-            await db.order.update({
-              where: { id: order.id },
-              data: { status: "REFUNDED" },
-            });
-          }
-        }
-        break;
-      }
-    }
-
-    return NextResponse.json({ received: true });
-  } catch (error) {
-    console.error("Webhook processing error:", error);
-    return NextResponse.json(
-      { error: "Webhook processing failed" },
-      { status: 500 }
-    );
   }
 }

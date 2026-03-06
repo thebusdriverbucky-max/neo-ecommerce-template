@@ -1,6 +1,5 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { stripe } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { sendLowStockAlert } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -190,125 +189,10 @@ export async function POST(request: NextRequest) {
     };
     lowStockAlerts();
 
-    const currency = storeCurrency.toLowerCase();
-
-    // Create Stripe Session
-    let stripeTaxRateId: string | undefined;
-    if (taxRate > 0) {
-      const taxRates = await stripe.taxRates.list({ active: true });
-      const existingTaxRate = taxRates.data.find(tr => tr.percentage === taxRate);
-
-      if (existingTaxRate) {
-        stripeTaxRateId = existingTaxRate.id;
-      } else {
-        const newTaxRate = await stripe.taxRates.create({
-          display_name: 'Tax',
-          inclusive: false,
-          percentage: taxRate,
-        });
-        stripeTaxRateId = newTaxRate.id;
-      }
-    }
-
-    const line_items = orderItemsData.map((item) => {
-      const product = products.find((p) => p.id === item.productId);
-      return {
-        price_data: {
-          currency: currency,
-          product_data: {
-            name: product?.name || "Product",
-            images: product?.image ? [product.image] : [],
-          },
-          unit_amount: Math.round(Number(item.price) * 100),
-        },
-        quantity: item.quantity,
-        tax_rates: stripeTaxRateId ? [stripeTaxRateId] : undefined,
-      };
+    return NextResponse.json({
+      orderId: order.id,
+      orderNumber: order.orderNumber
     });
-
-    let stripeDiscounts = undefined;
-    if (discountAmount > 0) {
-      try {
-        const coupon = await stripe.coupons.create({
-          amount_off: Math.round(discountAmount * 100),
-          currency: currency,
-          duration: 'once',
-          name: discountCode,
-        });
-        stripeDiscounts = [{ coupon: coupon.id }];
-      } catch (error) {
-        console.error("Stripe coupon creation failed:", error);
-        // Continue without discount if coupon creation fails
-      }
-    }
-
-    let stripeSession;
-    try {
-      stripeSession = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        line_items,
-        mode: "payment",
-        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/orders/${order.id}?success=true`,
-        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout?canceled=true`,
-        metadata: {
-          orderId: order.id,
-          ...(dbUserId && { userId: dbUserId }),
-        },
-        payment_intent_data: {
-          metadata: {
-            orderId: order.id,
-            ...(dbUserId && { userId: dbUserId }),
-          },
-        },
-        discounts: stripeDiscounts,
-        shipping_options: shippingCost > 0 ? [
-          {
-            shipping_rate_data: {
-              type: 'fixed_amount',
-              fixed_amount: {
-                amount: Math.round(shippingCost * 100),
-                currency: currency,
-              },
-              display_name: 'Standard Shipping',
-            },
-          },
-        ] : undefined,
-      });
-
-      const stripeIdToSave = (stripeSession.payment_intent as string) || stripeSession.id;
-
-      await db.order.update({
-        where: { id: order.id },
-        data: { stripePaymentIntentId: stripeIdToSave } as any,
-      });
-    } catch (stripeError: any) {
-      console.error("❌ Stripe Session Creation Failed:", {
-        error: stripeError.message,
-        stack: stripeError.stack,
-        orderId: order.id,
-        userId: userId
-      });
-      // If Stripe fails, we have an order in DB with PENDING status.
-      // We should probably cancel the order to keep DB consistent with payment state.
-      try {
-        await db.order.update({
-          where: { id: order.id },
-          data: { status: "CANCELLED" },
-        });
-      } catch (updateError) {
-        console.error("❌ Failed to cancel order after Stripe failure:", updateError);
-      }
-
-      return NextResponse.json(
-        {
-          error: "Payment initialization failed",
-          message: stripeError.message || "Could not create payment session. Your order has been cancelled."
-        },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ url: stripeSession.url });
   } catch (error: any) {
     console.error("❌ DETAILED Order creation error:", {
       message: error.message,

@@ -1,5 +1,7 @@
 'use server';
 
+console.log('DEBUG: settings.ts loaded');
+
 import { db as prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 
@@ -25,6 +27,10 @@ export interface StoreSettingsData {
   faviconUrl?: string;
   ogImageUrl?: string;
   siteLang?: string;
+  paymentIban?: string;
+  paymentBankName?: string;
+  paymentAccountName?: string;
+  paymentDetails?: string;
 }
 
 export async function getSettings() {
@@ -81,6 +87,10 @@ export async function updateSettings(data: StoreSettingsData) {
             faviconUrl: data.faviconUrl,
             ogImageUrl: data.ogImageUrl,
             siteLang: data.siteLang,
+            paymentIban: data.paymentIban,
+            paymentBankName: data.paymentBankName,
+            paymentAccountName: data.paymentAccountName,
+            paymentDetails: data.paymentDetails,
           },
         });
       } else {
@@ -107,6 +117,10 @@ export async function updateSettings(data: StoreSettingsData) {
             faviconUrl: data.faviconUrl,
             ogImageUrl: data.ogImageUrl,
             siteLang: data.siteLang,
+            paymentIban: data.paymentIban,
+            paymentBankName: data.paymentBankName,
+            paymentAccountName: data.paymentAccountName,
+            paymentDetails: data.paymentDetails,
           },
         });
       }
