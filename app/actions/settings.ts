@@ -56,8 +56,9 @@ export async function getSettings() {
 
 export async function updateSettings(data: StoreSettingsData) {
   try {
+    console.log('Updating settings with data:', JSON.stringify(data, null, 2));
     const settings = await prisma.storeSettings.findFirst();
-    const currencyChanged = settings?.currency !== data.currency;
+    const currencyChanged = data.currency !== undefined && settings?.currency !== data.currency;
 
     await prisma.$transaction(async (tx) => {
       if (settings) {
@@ -135,8 +136,8 @@ export async function updateSettings(data: StoreSettingsData) {
 
     revalidatePath('/admin/settings');
     return { success: true };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating settings:', error);
-    return { success: false, error: 'Failed to update settings' };
+    return { success: false, error: error.message || 'Failed to update settings' };
   }
 }

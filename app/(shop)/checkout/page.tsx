@@ -123,7 +123,7 @@ export default function CheckoutPage() {
               </div>
               <div className="flex justify-between border-t pt-3">
                 <span className="text-gray-500">Amount to pay:</span>
-                <span className="font-bold text-lg">{currency}{total}</span>
+                <span className="font-bold text-lg">{total.toFixed(2)} {currency}</span>
               </div>
             </div>
 

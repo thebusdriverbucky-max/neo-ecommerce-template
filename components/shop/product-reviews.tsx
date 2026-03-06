@@ -195,7 +195,7 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
                 </div>
                 <span className="font-medium">{review.user.name || "User"}</span>
                 <span className="text-gray-400 text-sm ml-auto">
-                  {new Date(review.createdAt).toLocaleDateString()}
+                  {new Date(review.createdAt).toLocaleDateString("en-US")}
                 </span>
                 {session?.user?.role === "ADMIN" && (
                   <button

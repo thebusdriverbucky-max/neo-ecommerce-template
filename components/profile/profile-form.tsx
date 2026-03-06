@@ -64,8 +64,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {message && (
         <div
           className={`p-4 mb-6 rounded-md ${message.type === "success"
-              ? "bg-green-50 text-green-700 border border-green-200"
-              : "bg-red-50 text-red-700 border border-red-200"
+            ? "bg-green-50 text-green-700 border border-green-200"
+            : "bg-red-50 text-red-700 border border-red-200"
             }`}
         >
           {message.text}
@@ -104,7 +104,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <div className="flex justify-between">
               <span className="text-gray-600 dark:text-gray-400">Member since:</span>
               <span className="font-medium">
-                {new Date(user.createdAt).toLocaleDateString()}
+                {new Date(user.createdAt).toLocaleDateString("en-US")}
               </span>
             </div>
           </div>

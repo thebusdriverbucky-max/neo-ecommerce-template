@@ -96,7 +96,7 @@ export default function SettingsPage() {
         toast.success('Settings updated successfully');
         loadSettings();
       } else {
-        toast.error('Failed to update settings');
+        toast.error(res.error || 'Failed to update settings');
       }
     });
   };
