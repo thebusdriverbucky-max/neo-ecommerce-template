@@ -62,8 +62,9 @@ export const sendOrderConfirmationEmail = async (
     tax?: number;
     shippingCost?: number;
     storeName?: string;
-    items: { name: string; qty: number; price: number }[];
     currency?: string;
+    currencySymbol?: string;
+    items: { name: string; qty: number; price: number }[];
     paymentIban?: string | null;
     paymentBankName?: string | null;
     paymentAccountName?: string | null;
@@ -73,6 +74,7 @@ export const sendOrderConfirmationEmail = async (
   const storeName = orderData.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
   const supportEmail = process.env.STORE_SUPPORT_EMAIL || 'support@example.com';
   const storeUrl = process.env.NEXT_PUBLIC_STORE_URL || '';
+  const currencySymbol = orderData.currencySymbol || process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$';
 
   const html = getOrderConfirmationEmailHtml({
     orderNumber: orderData.orderNumber,
@@ -86,6 +88,7 @@ export const sendOrderConfirmationEmail = async (
     supportEmail,
     storeUrl,
     currency: orderData.currency,
+    currencySymbol,
     paymentIban: orderData.paymentIban,
     paymentBankName: orderData.paymentBankName,
     paymentAccountName: orderData.paymentAccountName,
@@ -105,7 +108,8 @@ export const sendOrderStatusUpdateEmail = async (
   status: string,
   trackingNumber?: string | null
 ) => {
-  const html = getOrderStatusUpdateEmailHtml(orderId, status, trackingNumber);
+  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+  const html = getOrderStatusUpdateEmailHtml(orderId, status, storeName, trackingNumber);
 
   return sendEmail({
     to: userEmail,
@@ -120,7 +124,8 @@ export const sendNewOrderNotificationEmail = async (order: OrderWithDetails, sto
     return;
   }
 
-  const html = getNewOrderNotificationEmailHtml(order, storeSettings);
+  const currencySymbol = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$';
+  const html = getNewOrderNotificationEmailHtml(order, storeSettings, currencySymbol);
 
   return sendEmail({
     to: storeSettings.storeEmail,
@@ -130,7 +135,8 @@ export const sendNewOrderNotificationEmail = async (order: OrderWithDetails, sto
 };
 
 export const sendPasswordResetEmail = async (userEmail: string, resetLink: string) => {
-  const html = getPasswordResetEmailHtml(resetLink);
+  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+  const html = getPasswordResetEmailHtml(resetLink, storeName);
 
   return sendEmail({
     to: userEmail,
@@ -142,8 +148,9 @@ export const sendPasswordResetEmail = async (userEmail: string, resetLink: strin
 export const sendLowStockAlert = async (productName: string, currentStock: number) => {
   // In a real app, you'd probably fetch the admin email from DB or env
   const adminEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_FROM || 'admin@example.com';
+  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
 
-  const html = getLowStockAlertEmailHtml(productName, currentStock);
+  const html = getLowStockAlertEmailHtml(productName, currentStock, storeName);
 
   return sendEmail({
     to: adminEmail,

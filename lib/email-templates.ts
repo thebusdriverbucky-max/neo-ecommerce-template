@@ -1,15 +1,15 @@
 import { Order, OrderItem, Product, Address, StoreSettings } from "@prisma/client";
 
-const emailWrapper = (content: string) => `
+const emailWrapper = (content: string, storeName: string) => `
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1a1a1a; line-height: 1.6; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e5e7eb;">
   <div style="background-color: #0f172a; padding: 30px; text-align: center;">
-    <h1 style="color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 2px;">STORE</h1>
+    <h1 style="color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 2px;">${storeName.toUpperCase()}</h1>
   </div>
   <div style="padding: 32px;">
     ${content}
   </div>
   <div style="background-color: #f9fafb; padding: 20px; text-align: center; border-top: 1px solid #e5e7eb;">
-    <p style="color: #9ca3af; font-size: 12px; margin: 0;">© 2025 Store. All rights reserved.</p>
+    <p style="color: #9ca3af; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} ${storeName}. All rights reserved.</p>
   </div>
 </div>
 `;
@@ -26,6 +26,7 @@ interface OrderConfirmationData {
   supportEmail: string;
   storeUrl: string;
   currency?: string;
+  currencySymbol?: string;
   paymentIban?: string | null;
   paymentBankName?: string | null;
   paymentAccountName?: string | null;
@@ -34,7 +35,7 @@ interface OrderConfirmationData {
 
 export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): string => {
   const { orderNumber, orderId, total, subtotal, tax, shippingCost,
-    items, storeName, supportEmail, storeUrl, currency = 'USD',
+    items, storeName, supportEmail, storeUrl, currency = 'USD', currencySymbol = '$',
     paymentIban, paymentBankName, paymentAccountName, paymentDetails } = data;
 
   const paymentInstructionsHtml = paymentIban ? `
@@ -65,7 +66,7 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
     <tr style="background: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}">
       <td style="padding:12px 16px; font-size:14px; color:#1a1a1a;">${item.name}</td>
       <td style="padding:12px 16px; font-size:14px; text-align:center; color:#6b7280;">${item.qty}</td>
-      <td style="padding:12px 16px; font-size:14px; text-align:right; color:#1a1a1a;">$${item.price.toFixed(2)}</td>
+      <td style="padding:12px 16px; font-size:14px; text-align:right; color:#1a1a1a;">${currencySymbol}${item.price.toFixed(2)}</td>
     </tr>
   `).join('');
 
@@ -75,14 +76,14 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
     breakdownHtml += `
       <tr>
         <td colspan="2" style="padding:8px 16px; font-size:13px; color:#6b7280; text-align:right;">Subtotal</td>
-        <td style="padding:8px 16px; font-size:13px; color:#6b7280; text-align:right;">$${subtotal.toFixed(2)}</td>
+        <td style="padding:8px 16px; font-size:13px; color:#6b7280; text-align:right;">${currencySymbol}${subtotal.toFixed(2)}</td>
       </tr>
     `;
     if (shippingCost && shippingCost > 0) {
       breakdownHtml += `
         <tr>
           <td colspan="2" style="padding:4px 16px; font-size:13px; color:#6b7280; text-align:right;">Shipping</td>
-          <td style="padding:4px 16px; font-size:13px; color:#6b7280; text-align:right;">$${shippingCost.toFixed(2)}</td>
+          <td style="padding:4px 16px; font-size:13px; color:#6b7280; text-align:right;">${currencySymbol}${shippingCost.toFixed(2)}</td>
         </tr>
       `;
     } else if (shippingCost === 0) {
@@ -97,7 +98,7 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
       breakdownHtml += `
         <tr>
           <td colspan="2" style="padding:4px 16px; font-size:13px; color:#6b7280; text-align:right;">Tax</td>
-          <td style="padding:4px 16px; font-size:13px; color:#6b7280; text-align:right;">$${tax.toFixed(2)}</td>
+          <td style="padding:4px 16px; font-size:13px; color:#6b7280; text-align:right;">${currencySymbol}${tax.toFixed(2)}</td>
         </tr>
       `;
     }
@@ -149,7 +150,7 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
               ${breakdownHtml}
               <tr style="background:#eff6ff;">
                 <td colspan="2" style="padding:14px 16px;font-size:15px;font-weight:700;color:#1e40af;text-align:right;">Total</td>
-                <td style="padding:14px 16px;font-size:18px;font-weight:700;color:#2563eb;text-align:right;">$${total.toFixed(2)}</td>
+                <td style="padding:14px 16px;font-size:18px;font-weight:700;color:#2563eb;text-align:right;">${currencySymbol}${total.toFixed(2)}</td>
               </tr>
             </tbody>
           </table>
@@ -187,6 +188,7 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
 export const getOrderStatusUpdateEmailHtml = (
   orderId: string,
   status: string,
+  storeName: string,
   trackingNumber?: string | null
 ) => {
   let trackingHtml = "";
@@ -217,7 +219,7 @@ export const getOrderStatusUpdateEmailHtml = (
     <p style="margin-top: 24px;">Thank you for shopping with us.</p>
   `;
 
-  return emailWrapper(content);
+  return emailWrapper(content, storeName);
 };
 
 type OrderWithDetails = Order & {
@@ -225,14 +227,14 @@ type OrderWithDetails = Order & {
   shippingAddress: Address | null;
 };
 
-export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeSettings: StoreSettings) => {
+export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeSettings: StoreSettings, currencySymbol: string = '$') => {
   const itemsHtml = order.items
     .map(
       (item) => `
         <tr>
           <td style="padding: 12px 0; border-bottom: 1px solid #e5e7eb;">${item.product.name}</td>
           <td style="padding: 12px 0; border-bottom: 1px solid #e5e7eb; text-align: center;">${item.quantity}</td>
-          <td style="padding: 12px 0; border-bottom: 1px solid #e5e7eb; text-align: right;">$${item.price.toFixed(2)}</td>
+          <td style="padding: 12px 0; border-bottom: 1px solid #e5e7eb; text-align: right;">${currencySymbol}${item.price.toFixed(2)}</td>
         </tr>
       `
     )
@@ -256,7 +258,7 @@ export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeS
   if (order.subtotal !== undefined && order.subtotal !== null) {
     breakdownHtml += `
       <div style="text-align: right; margin-bottom: 8px; color: #6b7280; font-size: 14px;">
-        Subtotal: $${Number(order.subtotal).toFixed(2)}
+        Subtotal: ${currencySymbol}${Number(order.subtotal).toFixed(2)}
       </div>
     `;
   }
@@ -264,7 +266,7 @@ export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeS
     if (Number(order.shippingCost) > 0) {
       breakdownHtml += `
         <div style="text-align: right; margin-bottom: 8px; color: #6b7280; font-size: 14px;">
-          Shipping: $${Number(order.shippingCost).toFixed(2)}
+          Shipping: ${currencySymbol}${Number(order.shippingCost).toFixed(2)}
         </div>
       `;
     } else if (Number(order.shippingCost) === 0) {
@@ -278,7 +280,7 @@ export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeS
   if (order.tax !== undefined && order.tax !== null && Number(order.tax) > 0) {
     breakdownHtml += `
       <div style="text-align: right; margin-bottom: 8px; color: #6b7280; font-size: 14px;">
-        Tax: $${Number(order.tax).toFixed(2)}
+        Tax: ${currencySymbol}${Number(order.tax).toFixed(2)}
       </div>
     `;
   }
@@ -302,7 +304,7 @@ export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeS
 
     ${breakdownHtml}
     <div style="text-align: right;">
-      <h3 style="color: #1a1a1a; margin: 0; font-size: 20px;">Total: <span style="color: #2563eb;">$${order.total.toFixed(2)}</span></h3>
+      <h3 style="color: #1a1a1a; margin: 0; font-size: 20px;">Total: <span style="color: #2563eb;">${currencySymbol}${order.total.toFixed(2)}</span></h3>
     </div>
 
     ${shippingAddressHtml}
@@ -312,10 +314,10 @@ export const getNewOrderNotificationEmailHtml = (order: OrderWithDetails, storeS
     </div>
   `;
 
-  return emailWrapper(content);
+  return emailWrapper(content, storeSettings.storeName || "Store");
 };
 
-export const getPasswordResetEmailHtml = (resetLink: string) => {
+export const getPasswordResetEmailHtml = (resetLink: string, storeName: string) => {
   const content = `
     <h2 style="color: #1a1a1a; margin-top: 0;">Password Reset</h2>
     <p>You recently requested to reset your password for your account. Click the button below to reset it.</p>
@@ -331,10 +333,10 @@ export const getPasswordResetEmailHtml = (resetLink: string) => {
     </p>
   `;
 
-  return emailWrapper(content);
+  return emailWrapper(content, storeName);
 };
 
-export const getLowStockAlertEmailHtml = (productName: string, currentStock: number) => {
+export const getLowStockAlertEmailHtml = (productName: string, currentStock: number, storeName: string) => {
   const content = `
     <h2 style="color: #dc2626; margin-top: 0;">Low Stock Alert</h2>
     <p>This is an automated alert to inform you that a product is running low on stock.</p>
@@ -347,5 +349,5 @@ export const getLowStockAlertEmailHtml = (productName: string, currentStock: num
     <p style="margin-top: 24px;">Please review your inventory and restock this item soon to avoid stockouts.</p>
   `;
 
-  return emailWrapper(content);
+  return emailWrapper(content, storeName);
 };
