@@ -7,8 +7,7 @@
  import { Trash2, Plus, Minus } from "lucide-react";
  import { formatPrice } from "@/lib/utils";
  import { CldImage } from 'next-cloudinary';
- import { useEffect, useState } from "react";
- import { getSettings } from "@/app/actions/settings";
+ import { useSettings } from "@/components/providers/settings-provider";
  
  interface CartItemProps {
    item: CartItemType;
@@ -16,17 +15,7 @@
  
  export function CartItem({ item }: CartItemProps) {
    const { updateQuantity, removeItem } = useCart();
-   const [currency, setCurrency] = useState<string>("USD");
-
-   useEffect(() => {
-     async function fetchSettings() {
-       const response = await getSettings();
-       if (response.success && response.data) {
-         setCurrency(response.data.currency);
-       }
-     }
-     fetchSettings();
-   }, []);
+   const { currency } = useSettings();
 
   return (
     <div className="flex gap-4 p-4 border border-gray-200 rounded-lg mb-4">

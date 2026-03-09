@@ -11,9 +11,11 @@ import { ShoppingCart, User, Menu, X, Sun, Moon, Heart } from "lucide-react";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useTheme } from "next-themes";
+import { useSettings } from "@/components/providers/settings-provider";
 
 export function Navbar() {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+  const { settings } = useSettings();
+  const storeName = settings?.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
   const pathname = usePathname();
   const { data: session } = useSession();
   const { getTotalItems } = useCart();

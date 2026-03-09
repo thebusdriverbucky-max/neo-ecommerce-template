@@ -11,6 +11,8 @@ import { Toaster } from "sonner";
 import { CookieBanner } from "@/components/layout/CookieBanner";
 import { Analytics } from "@vercel/analytics/react";
 import { db as prisma } from "@/lib/db";
+import { SettingsProvider } from "@/components/providers/settings-provider";
+import { StoreSettingsData } from "@/app/actions/settings";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -60,14 +62,16 @@ export default async function RootLayout({
     <html lang={siteLang} suppressHydrationWarning>
       <body className={inter.className}>
         <SessionProvider>
-          <ThemeProvider attribute="class" defaultTheme="light" forcedTheme="light" enableSystem={false}>
-            <div className="flex flex-col min-h-screen">
-              <Navbar />
-              <main className="flex-1">{children}</main>
-              <Footer />
-            </div>
-            <Toaster />
-          </ThemeProvider>
+          <SettingsProvider initialSettings={settings as unknown as StoreSettingsData}>
+            <ThemeProvider attribute="class" defaultTheme="light" forcedTheme="light" enableSystem={false}>
+              <div className="flex flex-col min-h-screen">
+                <Navbar />
+                <main className="flex-1">{children}</main>
+                <Footer />
+              </div>
+              <Toaster />
+            </ThemeProvider>
+          </SettingsProvider>
         </SessionProvider>
         <CookieBanner />
         <Analytics />

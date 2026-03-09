@@ -10,10 +10,9 @@ import { ShoppingCart } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
 import { CldImage } from 'next-cloudinary';
 import { WishlistButton } from "@/components/ui/WishlistButton";
-import { useEffect, useState } from "react";
-import { getSettings } from "@/app/actions/settings";
 import { usePathname, useRouter } from "next/navigation";
 import { useWishlist } from "@/lib/wishlist-store";
+import { useSettings } from "@/components/providers/settings-provider";
 
 interface ProductCardProps {
   product: Product;
@@ -21,20 +20,10 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const { addItem } = useCart();
-  const [currency, setCurrency] = useState<string>("USD");
+  const { currency } = useSettings();
   const pathname = usePathname();
   const router = useRouter();
   const { removeItem, items } = useWishlist();
-
-  useEffect(() => {
-    async function fetchSettings() {
-      const response = await getSettings();
-      if (response.success && response.data) {
-        setCurrency(response.data.currency);
-      }
-    }
-    fetchSettings();
-  }, []);
 
   const handleAddToCart = async (e: React.MouseEvent) => {
     e.preventDefault();

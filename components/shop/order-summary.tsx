@@ -7,9 +7,8 @@ import { formatPrice } from "@/lib/utils";
 import Image from "next/image";
 import { CouponInput } from "./coupon-input";
 import { Button } from "@/components/ui/Button";
-import { X, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { getSettings, StoreSettingsData } from "@/app/actions/settings";
+import { X } from "lucide-react";
+import { useSettings } from "@/components/providers/settings-provider";
 
 interface OrderSummaryProps {
   items: CartItem[];
@@ -17,31 +16,14 @@ interface OrderSummaryProps {
 
 export function OrderSummary({ items }: OrderSummaryProps) {
   const { applyDiscount, removeDiscount, discount, getDiscountAmount } = useCart();
-  const [settings, setSettings] = useState<StoreSettingsData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchSettings() {
-      try {
-        const response = await getSettings();
-        if (response.success && response.data) {
-          setSettings(response.data as unknown as StoreSettingsData);
-        }
-      } catch (error) {
-        console.error("Failed to fetch settings:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchSettings();
-  }, []);
+  const { settings } = useSettings();
 
   const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
   const discountAmount = getDiscountAmount();
 
   // Calculate tax on the discounted amount (standard practice)
   const taxableAmount = Math.max(0, subtotal - discountAmount);
-  
+
   const taxRate = settings?.taxRate ?? 0;
   const freeShippingThreshold = settings?.freeShippingThreshold ?? Infinity;
   const shippingCost =
@@ -50,15 +32,6 @@ export function OrderSummary({ items }: OrderSummaryProps) {
   const tax = taxableAmount * (taxRate / 100);
   const shipping = shippingCost;
   const total = taxableAmount + tax + shipping;
-
-  if (isLoading) {
-    return (
-      <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg flex flex-col items-center justify-center min-h-[400px]">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400 mb-2" />
-        <p className="text-sm text-gray-500">Loading order summary...</p>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg">
