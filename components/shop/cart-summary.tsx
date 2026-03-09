@@ -1,45 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { formatPrice } from "@/lib/utils";
-import { getSettings } from "@/app/actions/settings";
 import { useCart } from "@/lib/cart-store";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { X, Loader2 } from "lucide-react";
+import { X } from "lucide-react";
+import { useSettings } from "@/components/providers/settings-provider";
 
 export function CartSummary() {
   const { items, discount, applyDiscount, removeDiscount, getDiscountAmount } = useCart();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [settings, setSettings] = useState<{
-    currency: string;
-    taxRate: number;
-    shippingCost: number;
-  } | null>(null);
-  const [fetchingSettings, setFetchingSettings] = useState(true);
-
-  useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const result = await getSettings();
-        if (result.success && result.data) {
-          setSettings({
-            currency: result.data.currency,
-            taxRate: result.data.taxRate,
-            shippingCost: result.data.shippingCost,
-          });
-        }
-      } catch (err) {
-        console.error("Failed to fetch settings:", err);
-      } finally {
-        setFetchingSettings(false);
-      }
-    };
-    fetchSettings();
-  }, []);
+  const { settings } = useSettings();
 
   const subtotal = items.reduce((total, item) => total + item.price * item.quantity, 0);
   const discountAmount = getDiscountAmount();
@@ -79,15 +54,6 @@ export function CartSummary() {
       setLoading(false);
     }
   };
-
-  if (fetchingSettings) {
-    return (
-      <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg sticky top-4 flex flex-col items-center justify-center min-h-[200px]">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400 mb-2" />
-        <p className="text-sm text-gray-500">Loading summary...</p>
-      </div>
-    );
-  }
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg sticky top-4">

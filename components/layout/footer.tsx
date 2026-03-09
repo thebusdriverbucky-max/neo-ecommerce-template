@@ -3,21 +3,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
-import { getSettings, StoreSettingsData } from "@/app/actions/settings";
+import { useSettings } from "@/components/providers/settings-provider";
 
 export function Footer() {
-  const [settings, setSettings] = useState<StoreSettingsData | null>(null);
-
-  useEffect(() => {
-    const fetchSettings = async () => {
-      const result = await getSettings();
-      if (result.success && result.data) {
-        setSettings(result.data as unknown as StoreSettingsData);
-      }
-    };
-    fetchSettings();
-  }, []);
+  const { settings } = useSettings();
 
   const year = new Date().getFullYear();
   const storeName = settings?.storeName || 'E-Commerce Store';

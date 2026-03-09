@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { addressSchema } from "@/lib/validations";
 import { Input } from "@/components/ui/Input";
 import CountrySelect from "@/components/ui/CountrySelect";
-import { getSettings } from "@/app/actions/settings";
+import { useSettings } from "@/components/providers/settings-provider";
 import { COUNTRIES } from "@/lib/constants";
 import { z } from "zod";
 
@@ -20,17 +20,8 @@ interface CheckoutFormProps {
 const COUNTRIES_WITH_REQUIRED_STATE = ['US', 'CA', 'AU', 'IN'];
 
 export function CheckoutForm({ onSubmit, loading }: CheckoutFormProps) {
-  const [enabledCountries, setEnabledCountries] = useState<string[]>([]);
-
-  useEffect(() => {
-    const fetchSettings = async () => {
-      const result = await getSettings();
-      if (result.success && result.data) {
-        setEnabledCountries(result.data.enabledCountries || []);
-      }
-    };
-    fetchSettings();
-  }, []);
+  const { settings } = useSettings();
+  const enabledCountries = settings?.enabledCountries || [];
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm({
     resolver: zodResolver(addressSchema),
