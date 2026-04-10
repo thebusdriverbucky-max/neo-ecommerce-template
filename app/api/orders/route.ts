@@ -42,6 +42,27 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
+    // Limit pending orders to prevent stock blocking
+    const pendingOrdersCount = await db.order.count({
+      where: {
+        OR: [
+          { userId: dbUserId || undefined },
+          { guestEmail: !dbUserId ? (body.guestEmail || "unknown") : undefined }
+        ],
+        status: "PENDING",
+        createdAt: {
+          gte: new Date(Date.now() - 30 * 60 * 1000) // Last 30 minutes
+        }
+      }
+    });
+
+    if (pendingOrdersCount >= 3) {
+      return NextResponse.json(
+        { error: "You have too many pending orders. Please complete or cancel them before placing a new one." },
+        { status: 429 }
+      );
+    }
+
     // Zod Validation
     let validatedData;
     try {
@@ -169,6 +190,18 @@ export async function POST(request: NextRequest) {
 
       const newOrder = await tx.order.create({ data: orderData });
 
+      // Decrement stock to reserve it temporarily
+      for (const item of orderItemsData) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: {
+            stock: {
+              decrement: item.quantity,
+            },
+          },
+        });
+      }
+
       return newOrder;
     });
 
@@ -291,12 +324,26 @@ export async function POST(request: NextRequest) {
       // If Stripe fails, we have an order in DB with PENDING status.
       // We should probably cancel the order to keep DB consistent with payment state.
       try {
-        await db.order.update({
-          where: { id: order.id },
-          data: { status: "CANCELLED" },
+        await db.$transaction(async (tx) => {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: "CANCELLED" },
+          });
+
+          // Restock items
+          for (const item of orderItemsData) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: {
+                stock: {
+                  increment: item.quantity,
+                },
+              },
+            });
+          }
         });
       } catch (updateError) {
-        console.error("❌ Failed to cancel order after Stripe failure:", updateError);
+        console.error("❌ Failed to cancel order and restock after Stripe failure:", updateError);
       }
 
       return NextResponse.json(
