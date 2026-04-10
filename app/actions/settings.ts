@@ -4,6 +4,7 @@ console.log('DEBUG: settings.ts loaded');
 
 import { db as prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
+import { auth } from '@/lib/auth';
 
 export interface StoreSettingsData {
   storeName?: string;
@@ -58,6 +59,11 @@ export async function getSettings() {
 
 export async function updateSettings(data: StoreSettingsData) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== 'ADMIN') {
+      return { success: false, error: 'Unauthorized' };
+    }
+
     const settings = await prisma.storeSettings.findFirst();
     const currencyChanged = settings?.currency !== data.currency;
 

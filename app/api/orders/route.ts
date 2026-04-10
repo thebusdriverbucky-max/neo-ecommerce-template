@@ -168,6 +168,18 @@ export async function POST(request: NextRequest) {
 
       const newOrder = await tx.order.create({ data: orderData });
 
+      // Decrement stock to prevent pending order floods
+      for (const item of orderItemsData) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: {
+            stock: {
+              decrement: item.quantity,
+            },
+          },
+        });
+      }
+
       return newOrder;
     });
 

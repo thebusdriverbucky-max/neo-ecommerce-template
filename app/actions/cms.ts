@@ -2,6 +2,7 @@
 
 import { db as prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
+import { auth } from '@/lib/auth';
 
 export interface ContentPageData {
   slug: string;
@@ -36,6 +37,11 @@ export async function getPageBySlug(slug: string) {
 
 export async function updatePage(id: string, data: Partial<ContentPageData>) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== 'ADMIN') {
+      return { success: false, error: 'Unauthorized' };
+    }
+
     await prisma.contentPage.update({
       where: { id },
       data,
@@ -50,6 +56,11 @@ export async function updatePage(id: string, data: Partial<ContentPageData>) {
 
 export async function createPage(data: ContentPageData) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== 'ADMIN') {
+      return { success: false, error: 'Unauthorized' };
+    }
+
     await prisma.contentPage.create({
       data,
     });
@@ -63,6 +74,11 @@ export async function createPage(data: ContentPageData) {
 
 export async function togglePageVisibility(id: string, isVisible: boolean) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== 'ADMIN') {
+      return { success: false, error: 'Unauthorized' };
+    }
+
     await prisma.contentPage.update({
       where: { id },
       data: { isVisible },
