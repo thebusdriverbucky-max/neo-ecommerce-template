@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
         console.error("Email alert background process error:", err);
       }
     };
-    lowStockAlerts();
+    await lowStockAlerts();
 
     const currency = storeCurrency.toLowerCase();
 
