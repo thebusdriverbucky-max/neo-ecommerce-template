@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
         console.error("Email alert background process error:", err);
       }
     };
-    lowStockAlerts();
+    await lowStockAlerts();
 
     return NextResponse.json({
       orderId: order.id,
