@@ -146,10 +146,17 @@ export async function POST(request: NextRequest) {
       if (shippingAddress) {
         const newAddress = await tx.address.create({
           data: {
-            ...shippingAddress,
+            firstName: shippingAddress.firstName,
+            lastName: shippingAddress.lastName,
+            email: shippingAddress.email,
+            phone: shippingAddress.phone,
+            street: shippingAddress.street,
+            city: shippingAddress.city,
             state: shippingAddress.state || "",
-            userId: dbUserId || undefined,
-          } as any,
+            postalCode: shippingAddress.postalCode,
+            country: shippingAddress.country,
+            userId: dbUserId,
+          },
         });
         finalShippingAddressId = newAddress.id;
       }

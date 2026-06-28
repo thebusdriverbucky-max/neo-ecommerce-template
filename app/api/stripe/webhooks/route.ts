@@ -5,6 +5,19 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { sendOrderConfirmationEmail, sendNewOrderNotificationEmail } from "@/lib/email";
+import { Prisma } from "@prisma/client";
+
+type UpdatedOrder = Prisma.OrderGetPayload<{
+  include: {
+    user: true;
+    items: {
+      include: {
+        product: true;
+      };
+    };
+    shippingAddress: true;
+  };
+}>;
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +61,7 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
 
   // Use a transaction to ensure atomicity
   try {
-    const updatedOrder = await db.$transaction(async (tx) => {
+    const updatedOrder = (await db.$transaction(async (tx) => {
       const order = await tx.order.findUnique({
         where: { id: orderId },
         include: {
@@ -88,21 +101,21 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
           shippingAddress: true,
         },
       });
-    });
+    })) as UpdatedOrder | null;
 
     if (updatedOrder) {
-      const customerEmail = (updatedOrder as any).user?.email ?? (updatedOrder as any).guestEmail ?? null;
+      const customerEmail = updatedOrder.user?.email ?? updatedOrder.guestEmail ?? null;
 
       if (customerEmail) {
         const orderData = {
-          orderNumber: (updatedOrder as any).orderNumber || `ORD-${updatedOrder.id.slice(0, 8).toUpperCase()}`,
+          orderNumber: updatedOrder.orderNumber || `ORD-${updatedOrder.id.slice(0, 8).toUpperCase()}`,
           orderId: updatedOrder.id,
           total: Number(updatedOrder.total),
           subtotal: Number(updatedOrder.subtotal),
           tax: Number(updatedOrder.tax),
           shippingCost: Number(updatedOrder.shippingCost),
           storeName: storeSettings?.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store',
-          items: (updatedOrder as any).items.map((item: any) => ({
+          items: updatedOrder.items.map((item) => ({
             name: item.product.name,
             qty: item.quantity,
             price: Number(item.price),
@@ -119,7 +132,7 @@ export async function confirmOrder(orderId: string, paymentIntentId: string, sto
       const adminEmail = storeSettings?.storeEmail || process.env.ADMIN_EMAIL;
       if (adminEmail) {
         try {
-          await sendNewOrderNotificationEmail(updatedOrder as any, {
+          await sendNewOrderNotificationEmail(updatedOrder, {
             ...storeSettings,
             storeEmail: adminEmail
           });

@@ -92,7 +92,7 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
   // Проверка прав доступа: владелец, админ или гостевой заказ
   const isAdmin = session?.user?.role === "ADMIN";
   const isOwner = session?.user?.id && order.userId === session.user.id;
-  const isGuestOrder = !order.userId && (order as any).guestEmail;
+  const isGuestOrder = !order.userId && order.guestEmail;
 
   if (!isAdmin && !isOwner && !isGuestOrder) {
     redirect("/login");
@@ -164,10 +164,10 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
                   </div>
                   <div className="text-right">
                     <p className="font-medium text-gray-900 dark:text-white">
-                      {formatPrice(Number(item.price) * item.quantity, (order as any).currency)}
+                      {formatPrice(Number(item.price) * item.quantity, order.currency)}
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {formatPrice(Number(item.price), (order as any).currency)} each
+                      {formatPrice(Number(item.price), order.currency)} each
                     </p>
                   </div>
                 </div>
@@ -186,19 +186,19 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
             <div className="p-4 space-y-3">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Subtotal</span>
-                <span>{formatPrice(Number(order.subtotal), (order as any).currency)}</span>
+                <span>{formatPrice(Number(order.subtotal), order.currency)}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Shipping</span>
-                <span>{formatPrice(Number(order.shippingCost), (order as any).currency)}</span>
+                <span>{formatPrice(Number(order.shippingCost), order.currency)}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Tax</span>
-                <span>{formatPrice(Number(order.tax), (order as any).currency)}</span>
+                <span>{formatPrice(Number(order.tax), order.currency)}</span>
               </div>
               <div className="pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between font-bold text-lg">
                 <span>Total</span>
-                <span>{formatPrice(Number(order.total), (order as any).currency)}</span>
+                <span>{formatPrice(Number(order.total), order.currency)}</span>
               </div>
             </div>
           </div>
