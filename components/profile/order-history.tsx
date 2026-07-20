@@ -62,7 +62,7 @@ export default function OrderHistory({ orders }: OrderHistoryProps) {
                       {new Date(order.createdAt).toLocaleDateString("en-US")}
                     </td>
                     <td className="py-2 px-4 border-b">
-                      {formatPrice(order.total, (order as any).currency)}
+                      {formatPrice(order.total, order.currency)}
                     </td>
                     <td className="py-2 px-4 border-b">{order.status}</td>
                   </tr>

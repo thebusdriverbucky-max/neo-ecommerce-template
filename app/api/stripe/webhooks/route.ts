@@ -59,18 +59,18 @@ async function confirmOrder(orderId: string, paymentIntentId: string | null, sto
     });
 
     if (updatedOrder) {
-      const customerEmail = (updatedOrder as any).user?.email ?? (updatedOrder as any).guestEmail ?? null;
+      const customerEmail = updatedOrder.user?.email ?? updatedOrder.guestEmail ?? null;
 
       if (customerEmail) {
         const orderData = {
-          orderNumber: (updatedOrder as any).orderNumber || `ORD-${updatedOrder.id.slice(0, 8).toUpperCase()}`,
+          orderNumber: updatedOrder.orderNumber || `ORD-${updatedOrder.id.slice(0, 8).toUpperCase()}`,
           orderId: updatedOrder.id,
           total: Number(updatedOrder.total),
           subtotal: Number(updatedOrder.subtotal),
           tax: Number(updatedOrder.tax),
           shippingCost: Number(updatedOrder.shippingCost),
           storeName: storeSettings?.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store',
-          items: (updatedOrder as any).items.map((item: any) => ({
+          items: updatedOrder.items.map((item) => ({
             name: item.product.name,
             qty: item.quantity,
             price: Number(item.price),

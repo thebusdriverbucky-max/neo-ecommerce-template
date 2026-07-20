@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
             ...shippingAddress,
             state: shippingAddress.state || "",
             userId: dbUserId || undefined,
-          } as any,
+          },
         });
         finalShippingAddressId = newAddress.id;
       }
@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Create order
-      const orderData: any = {
+      const orderData = {
         orderNumber: orderNumber,
         status: "PENDING",
         subtotal: subtotal,
@@ -158,15 +158,10 @@ export async function POST(request: NextRequest) {
             price: item.price,
           })),
         },
+        ...(dbUserId ? { userId: dbUserId } : { guestEmail: guestEmail }),
       };
 
-      if (dbUserId) {
-        orderData.userId = dbUserId;
-      } else {
-        orderData.guestEmail = guestEmail;
-      }
-
-      const newOrder = await tx.order.create({ data: orderData });
+      const newOrder = await tx.order.create({ data: orderData as any });
 
       // Decrement stock to prevent pending order floods
       for (const item of orderItemsData) {
