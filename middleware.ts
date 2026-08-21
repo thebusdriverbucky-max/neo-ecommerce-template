@@ -1,7 +1,13 @@
 import NextAuth from 'next-auth';
 import { authConfig } from '@/lib/auth.config';
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyLicenseToken, fetchLicenseValidation, LICENSE_COOKIE_NAME } from '@/lib/license';
+import {
+  verifyLicenseToken,
+  verifyGraceToken,
+  createGraceToken,
+  fetchLicenseValidation,
+  LICENSE_COOKIE_NAME,
+} from '@/lib/license';
 
 const { auth } = NextAuth(authConfig);
 
@@ -23,11 +29,14 @@ async function licenseMiddleware(request: NextRequest): Promise<NextResponse | n
   }
 
 
-  // Check existing JWT cookie
+  // Check existing JWT cookie (full license token or locally-signed grace token)
   const cookieToken = request.cookies.get(LICENSE_COOKIE_NAME)?.value;
-  if (cookieToken && cookieToken !== 'grace') {
-    const isValid = await verifyLicenseToken(cookieToken);
-    if (isValid) return null; // Valid JWT — allow through
+  if (cookieToken) {
+    // Valid license JWT — allow through without any network call
+    if (await verifyLicenseToken(cookieToken)) return null;
+    // Valid grace token (license server was down earlier) — allow through
+    // WITHOUT hitting the server again until the grace window expires.
+    if (await verifyGraceToken(cookieToken)) return null;
   }
 
   // Cookie missing or expired — fetch from license server
@@ -53,14 +62,22 @@ async function licenseMiddleware(request: NextRequest): Promise<NextResponse | n
       path: '/',
     });
   } else if (grace) {
-    // Server unreachable — short grace cookie
-    response.cookies.set(LICENSE_COOKIE_NAME, 'grace', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 60 * 60 * 6, // 6h grace
-      path: '/',
-    });
+    // Server unreachable — issue a short-lived SIGNED grace token so
+    // subsequent requests skip the license server entirely until it
+    // expires (site keeps working while the license server is down).
+    try {
+      const graceToken = await createGraceToken(6); // 6h grace
+      response.cookies.set(LICENSE_COOKIE_NAME, graceToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 60 * 60 * 6, // 6h grace
+        path: '/',
+      });
+    } catch {
+      // LICENSE_SERVER_SECRET not configured — continue without a cookie;
+      // each request will re-check against the license server.
+    }
   }
 
   return response;
