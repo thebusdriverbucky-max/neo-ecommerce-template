@@ -2,20 +2,32 @@ import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const resetPasswordSchema = z.object({
   token: z.string(),
-  password: z.string().min(6),
+  password: z.string().min(8).max(100),
 });
 
 export async function POST(req: Request) {
   try {
+    // Rate limit token guessing attempts
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const { success } = await checkRateLimit(ip, "forgotPassword");
+    if (!success) {
+      return NextResponse.json({ message: "Too many requests" }, { status: 429 });
+    }
+
     const body = await req.json();
     const { token, password } = resetPasswordSchema.parse(body);
 
+    // Tokens are stored hashed — hash the incoming token before lookup
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
     const user = await prisma.user.findFirst({
       where: {
-        resetToken: token,
+        resetToken: hashedToken,
         resetTokenExpiry: {
           gt: new Date(),
         },

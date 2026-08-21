@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { CheckCircle2, Package, Truck, CreditCard, MapPin, AlertCircle } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
 import { stripe } from "@/lib/stripe";
-import { confirmOrder } from "@/app/api/stripe/webhooks/route";
+import { confirmOrder } from "@/lib/order-confirmation";
 
 interface OrderDetailsPageProps {
   params: {

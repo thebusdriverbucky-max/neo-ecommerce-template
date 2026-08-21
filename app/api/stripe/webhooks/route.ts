@@ -4,155 +4,14 @@ import { stripe } from "@/lib/stripe";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-import { sendOrderConfirmationEmail, sendNewOrderNotificationEmail } from "@/lib/email";
-import { Prisma } from "@prisma/client";
-
-type UpdatedOrder = Prisma.OrderGetPayload<{
-  include: {
-    user: true;
-    items: {
-      include: {
-        product: true;
-      };
-    };
-    shippingAddress: true;
-  };
-}>;
+import {
+  confirmOrder,
+  handleOrderCancellation,
+} from "@/lib/order-confirmation";
 
 export const dynamic = 'force-dynamic';
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
-
-async function handleOrderCancellation(orderId: string) {
-  if (!orderId) return;
-
-  const order = await db.order.findUnique({
-    where: { id: orderId },
-    include: { items: true },
-  });
-
-  if (!order || order.status === "CANCELLED") return;
-
-  await db.$transaction(async (tx) => {
-    // Update order status
-    await tx.order.update({
-      where: { id: orderId },
-      data: { status: "CANCELLED" },
-    });
-
-    // Return stock
-    for (const item of order.items) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: {
-          stock: {
-            increment: item.quantity,
-          },
-        },
-      });
-    }
-  });
-}
-
-export async function confirmOrder(orderId: string, paymentIntentId: string, storeSettings: any) {
-  if (!orderId) {
-    return;
-  }
-
-  // Use a transaction to ensure atomicity
-  try {
-    const updatedOrder = (await db.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({
-        where: { id: orderId },
-        include: {
-          items: true,
-        },
-      });
-
-      // If order doesn't exist or is already confirmed, do nothing.
-      if (!order || order.status === "CONFIRMED") {
-        return null;
-      }
-
-      // 1. Update stock for each item
-      for (const item of order.items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: {
-              decrement: item.quantity,
-            },
-          },
-        });
-      }
-
-      // 2. Update order status to CONFIRMED
-      return tx.order.update({
-        where: { id: orderId },
-        data: {
-          status: "CONFIRMED",
-          stripePaymentIntentId: paymentIntentId,
-        },
-        include: {
-          user: true,
-          items: {
-            include: { product: true },
-          },
-          shippingAddress: true,
-        },
-      });
-    })) as UpdatedOrder | null;
-
-    if (updatedOrder) {
-      const customerEmail = updatedOrder.user?.email ?? updatedOrder.guestEmail ?? null;
-
-      if (customerEmail) {
-        const orderData = {
-          orderNumber: updatedOrder.orderNumber || `ORD-${updatedOrder.id.slice(0, 8).toUpperCase()}`,
-          orderId: updatedOrder.id,
-          total: Number(updatedOrder.total),
-          subtotal: Number(updatedOrder.subtotal),
-          tax: Number(updatedOrder.tax),
-          shippingCost: Number(updatedOrder.shippingCost),
-          storeName: storeSettings?.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store',
-          items: updatedOrder.items.map((item) => ({
-            name: item.product.name,
-            qty: item.quantity,
-            price: Number(item.price),
-          })),
-        };
-
-        try {
-          await sendOrderConfirmationEmail(customerEmail, orderData);
-        } catch (emailError) {
-          console.error(`Failed to send confirmation email for order ${orderId}:`, emailError);
-        }
-      }
-
-      const adminEmail = storeSettings?.storeEmail || process.env.ADMIN_EMAIL;
-      if (adminEmail) {
-        try {
-          await sendNewOrderNotificationEmail(updatedOrder, {
-            ...storeSettings,
-            storeEmail: adminEmail
-          });
-        } catch (emailError) {
-          console.error(`Failed to send new order notification for order ${orderId}:`, emailError);
-        }
-      }
-    }
-  } catch (error) {
-    console.error(`❌ Error in confirmOrder for order ${orderId}:`, error);
-    throw error;
-  }
-}
-
-async function handlePaymentIntentFailed(
-  paymentIntent: Stripe.PaymentIntent
-) {
-  const orderId = paymentIntent.metadata.orderId;
-  await handleOrderCancellation(orderId);
-}
 
 export async function POST(request: NextRequest) {
   const body = await request.text();
@@ -222,7 +81,7 @@ export async function POST(request: NextRequest) {
       }
       case "payment_intent.payment_failed": {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
-        await handlePaymentIntentFailed(paymentIntent);
+        await handleOrderCancellation(paymentIntent.metadata.orderId);
         break;
       }
       case "checkout.session.expired": {

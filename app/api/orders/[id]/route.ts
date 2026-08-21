@@ -30,9 +30,45 @@ export async function PATCH(
     const body = await request.json();
     const { status, trackingNumber } = body;
 
+    // Whitelist of statuses a user is allowed to set.
+    // Payment-related transitions (PENDING -> CONFIRMED) must only ever
+    // happen through the Stripe webhook, never through this endpoint.
+    const ALLOWED_STATUSES = ["CANCELLED", "SHIPPED", "DELIVERED"] as const;
+
     const updateData: any = {};
-    if (status) updateData.status = status;
-    if (trackingNumber !== undefined) updateData.trackingNumber = trackingNumber;
+    if (status) {
+      if (typeof status !== "string" || !(ALLOWED_STATUSES as readonly string[]).includes(status)) {
+        return NextResponse.json(
+          { error: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(", ")}` },
+          { status: 400 }
+        );
+      }
+      // Non-admins may only cancel their own pending order
+      if (session.user.role !== "ADMIN" && status !== "CANCELLED") {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+      // Cancelling a pending order returns the reserved stock
+      if (status === "CANCELLED" && order.status === "PENDING") {
+        const items = await db.orderItem.findMany({
+          where: { orderId: order.id },
+        });
+        await db.$transaction(async (tx) => {
+          for (const item of items) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { stock: { increment: item.quantity } },
+            });
+          }
+        });
+      }
+      updateData.status = status;
+    }
+    if (trackingNumber !== undefined) {
+      if (typeof trackingNumber !== "string" || trackingNumber.length > 100) {
+        return NextResponse.json({ error: "Invalid trackingNumber" }, { status: 400 });
+      }
+      updateData.trackingNumber = trackingNumber;
+    }
 
     const updatedOrder = await db.order.update({
       where: { id: params.id },

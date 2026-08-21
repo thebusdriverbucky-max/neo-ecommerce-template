@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
+import { productSchema } from "@/lib/validations";
 
 export async function GET(request: NextRequest) {
   try {
@@ -60,21 +61,31 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
+    // Validate admin input with the shared Zod schema
+    const parsed = productSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: parsed.error.issues },
+        { status: 400 }
+      );
+    }
+    const data = parsed.data;
+
     const settings = await db.storeSettings.findFirst();
     const currency = settings?.currency || "USD";
 
     const product = await db.product.create({
       data: {
-        name: body.name,
-        slug: body.slug,
-        description: body.description,
-        price: body.price,
+        name: data.name,
+        slug: data.slug,
+        description: data.description,
+        price: data.price,
         currency: currency,
-        image: body.image,
-        images: body.images || [],
-        category: body.category,
-        stock: body.stock,
-        featured: body.featured,
+        image: data.image,
+        images: data.images || [],
+        category: data.category,
+        stock: data.stock,
+        featured: data.featured,
       },
     });
 

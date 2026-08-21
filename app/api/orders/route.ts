@@ -1,5 +1,5 @@
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, withDbRetry } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { sendLowStockAlert } from "@/lib/email";
@@ -28,7 +28,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const userIp = request.ip ?? "127.0.0.1";
+    // `request.ip` is undefined in Next.js — use the proxy header instead,
+    // otherwise ALL guests share a single "127.0.0.1" rate-limit bucket.
+    const userIp =
+      request.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
     const rateLimitKey = dbUserId || userIp;
 
     // Rate Limiting
@@ -79,6 +82,15 @@ export async function POST(request: NextRequest) {
 
     if (!dbUserId && !guestEmail) {
       return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
+    }
+
+    // Validate optional address IDs coming from the raw body (must be cuids)
+    const cuidRegex = /^c[a-z0-9]{20,}$/i;
+    if (billingAddressId !== undefined && billingAddressId !== null && !(typeof billingAddressId === "string" && cuidRegex.test(billingAddressId))) {
+      return NextResponse.json({ error: "Invalid billingAddressId" }, { status: 400 });
+    }
+    if (bodyShippingAddressId !== undefined && bodyShippingAddressId !== null && !(typeof bodyShippingAddressId === "string" && cuidRegex.test(bodyShippingAddressId))) {
+      return NextResponse.json({ error: "Invalid shippingAddressId" }, { status: 400 });
     }
 
     // Fetch store settings
@@ -139,78 +151,116 @@ export async function POST(request: NextRequest) {
     const shipping = shippingCost;
     const finalTotal = total + tax + shipping;
 
-    // Transaction for atomic order creation and stock update
-    const order = await db.$transaction(async (tx) => {
-      let finalShippingAddressId = bodyShippingAddressId || null;
+    // Transaction for atomic order creation and stock update.
+    // Retried on order-number collisions (P2002) caused by concurrent orders.
+    const createOrderTransaction = () =>
+      db.$transaction(async (tx) => {
+        let finalShippingAddressId = bodyShippingAddressId || null;
 
-      if (shippingAddress) {
-        const newAddress = await tx.address.create({
-          data: {
-            firstName: shippingAddress.firstName,
-            lastName: shippingAddress.lastName,
-            email: shippingAddress.email,
-            phone: shippingAddress.phone,
-            street: shippingAddress.street,
-            city: shippingAddress.city,
-            state: shippingAddress.state || "",
-            postalCode: shippingAddress.postalCode,
-            country: shippingAddress.country,
-            userId: dbUserId,
-          },
-        });
-        finalShippingAddressId = newAddress.id;
-      }
-
-      // Generate order number
-      let orderNumber;
-      try {
-        orderNumber = await generateOrderNumber();
-      } catch (err) {
-        throw new Error("Failed to generate order number");
-      }
-
-      // Create order
-      const orderData: any = {
-        orderNumber: orderNumber,
-        status: "PENDING",
-        subtotal: subtotal,
-        tax: tax,
-        shippingCost: shipping,
-        total: finalTotal,
-        currency: storeCurrency,
-        shippingAddressId: finalShippingAddressId,
-        billingAddressId,
-        items: {
-          create: orderItemsData.map(item => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.price,
-          })),
-        },
-      };
-
-      if (dbUserId) {
-        orderData.userId = dbUserId;
-      } else {
-        orderData.guestEmail = guestEmail;
-      }
-
-      const newOrder = await tx.order.create({ data: orderData });
-
-      // Decrement stock to reserve it temporarily
-      for (const item of orderItemsData) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: {
-              decrement: item.quantity,
+        if (shippingAddress) {
+          const newAddress = await tx.address.create({
+            data: {
+              firstName: shippingAddress.firstName,
+              lastName: shippingAddress.lastName,
+              email: shippingAddress.email,
+              phone: shippingAddress.phone,
+              street: shippingAddress.street,
+              city: shippingAddress.city,
+              state: shippingAddress.state || "",
+              postalCode: shippingAddress.postalCode,
+              country: shippingAddress.country,
+              userId: dbUserId,
             },
-          },
-        });
-      }
+          });
+          finalShippingAddressId = newAddress.id;
+        }
 
-      return newOrder;
-    });
+        // Generate order number
+        let orderNumber;
+        try {
+          orderNumber = await generateOrderNumber();
+        } catch (err) {
+          throw new Error("Failed to generate order number");
+        }
+
+        // Create order
+        const orderData: any = {
+          orderNumber: orderNumber,
+          status: "PENDING",
+          subtotal: subtotal,
+          tax: tax,
+          shippingCost: shipping,
+          total: finalTotal,
+          currency: storeCurrency,
+          shippingAddressId: finalShippingAddressId,
+          billingAddressId: billingAddressId || null,
+          items: {
+            create: orderItemsData.map(item => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              price: item.price,
+            })),
+          },
+        };
+
+        if (dbUserId) {
+          orderData.userId = dbUserId;
+        } else {
+          orderData.guestEmail = guestEmail;
+        }
+
+        const newOrder = await tx.order.create({ data: orderData });
+
+        // Decrement stock to reserve it temporarily.
+        // Conditional decrement prevents negative stock under concurrency:
+        // if any product no longer has enough stock, the whole
+        // transaction is rolled back.
+        for (const item of orderItemsData) {
+          const updated = await tx.product.updateMany({
+            where: {
+              id: item.productId,
+              stock: { gte: item.quantity },
+            },
+            data: {
+              stock: {
+                decrement: item.quantity,
+              },
+            },
+          });
+
+          if (updated.count === 0) {
+            throw new Error(`INSUFFICIENT_STOCK:${item.productId}`);
+          }
+        }
+
+        return newOrder;
+      });
+
+    let order;
+    try {
+      order = await withDbRetry(createOrderTransaction);
+    } catch (error: any) {
+      if (String(error?.message ?? "").startsWith("INSUFFICIENT_STOCK:")) {
+        return NextResponse.json(
+          { error: "Insufficient stock for one or more items" },
+          { status: 409 }
+        );
+      }
+      // Unique constraint on orderNumber — regenerate and try again
+      if (error?.code === "P2002") {
+        try {
+          order = await withDbRetry(createOrderTransaction);
+        } catch (retryError: any) {
+          console.error("❌ Order creation failed after retry:", retryError);
+          return NextResponse.json(
+            { error: "Failed to create order" },
+            { status: 500 }
+          );
+        }
+      } else {
+        throw error;
+      }
+    }
 
     // Check for low stock after transaction (best effort)
     // Use Promise.allSettled to ensure email failures don't block the process
@@ -232,24 +282,11 @@ export async function POST(request: NextRequest) {
 
     const currency = storeCurrency.toLowerCase();
 
-    // Create Stripe Session
-    let stripeTaxRateId: string | undefined;
-    if (taxRate > 0) {
-      const taxRates = await stripe.taxRates.list({ active: true });
-      const existingTaxRate = taxRates.data.find(tr => tr.percentage === taxRate);
-
-      if (existingTaxRate) {
-        stripeTaxRateId = existingTaxRate.id;
-      } else {
-        const newTaxRate = await stripe.taxRates.create({
-          display_name: 'Tax',
-          inclusive: false,
-          percentage: taxRate,
-        });
-        stripeTaxRateId = newTaxRate.id;
-      }
-    }
-
+    // Tax is taken ONLY from admin store settings and is already included
+    // in the order total. We deliberately do NOT pass Stripe `tax_rates`
+    // on line items — that would charge tax a second time on top of the
+    // total computed above. If no tax rate is configured in the admin,
+    // no tax is applied at all.
     const line_items = orderItemsData.map((item) => {
       const product = products.find((p) => p.id === item.productId);
       return {
@@ -262,7 +299,6 @@ export async function POST(request: NextRequest) {
           unit_amount: Math.round(Number(item.price) * 100),
         },
         quantity: item.quantity,
-        tax_rates: stripeTaxRateId ? [stripeTaxRateId] : undefined,
       };
     });
 
@@ -378,7 +414,12 @@ export async function POST(request: NextRequest) {
       });
     }
     return NextResponse.json(
-      { error: "Failed to create order", message: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined },
+      {
+        error: "Failed to create order",
+        // Never leak internal error details in production
+        message: process.env.NODE_ENV === 'development' ? error.message : undefined,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      },
       { status: 500 }
     );
   }

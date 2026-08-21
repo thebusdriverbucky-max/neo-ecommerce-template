@@ -30,14 +30,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
     }
 
-    // Генерация токена
+    // Генерация токена. В БД храним только SHA-256 хэш —
+    // утечка базы не даст возможности восстановить токены.
     const resetToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
     const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 час
 
     await prisma.user.update({
       where: { email },
       data: {
-        resetToken,
+        resetToken: hashedToken,
         resetTokenExpiry,
       },
     });

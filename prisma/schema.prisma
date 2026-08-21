@@ -3,7 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
+  // Pooled connection (PgBouncer) for the app, unpooled for migrations.
+  // Required for Neon serverless deployments.
+  directUrl = env("DATABASE_URL_UNPOOLED")
   url      = env("DATABASE_URL")
 }
 

@@ -23,7 +23,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     GoogleProvider({
       clientId: process.env.GOOGLE_ID || "",
       clientSecret: process.env.GOOGLE_SECRET || "",
-      allowDangerousEmailAccountLinking: true,
+      // Disabled for security: automatic linking by email allows account
+      // takeover if the OAuth provider does not verify the email address.
+      allowDangerousEmailAccountLinking: false,
     }),
     CredentialsProvider({
       name: "Credentials",
