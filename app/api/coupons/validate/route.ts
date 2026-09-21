@@ -4,17 +4,18 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
-    const identifier = session?.user?.id || request.headers.get("x-forwarded-for") || "127.0.0.1";
+    const identifier = session?.user?.id || getTrustedClientIdentifier(request);
 
     const rateLimit = await checkRateLimit(identifier, "coupons");
     if (!rateLimit.success) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429 }
+        { error: rateLimit.unavailable ? "Coupon protection is temporarily unavailable. Please try again shortly." : "Too many requests. Please try again later." },
+        { status: rateLimit.unavailable ? 503 : 429 }
       );
     }
 
@@ -79,4 +80,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

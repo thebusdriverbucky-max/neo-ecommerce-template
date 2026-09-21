@@ -10,6 +10,8 @@ import {
   sendOrderConfirmationEmail,
   sendNewOrderNotificationEmail,
 } from "@/lib/email";
+import { createGuestOrderToken } from "@/lib/guest-order-token";
+import { logger } from "@/lib/logger";
 
 type UpdatedOrder = Prisma.OrderGetPayload<{
   include: {
@@ -23,10 +25,10 @@ type UpdatedOrder = Prisma.OrderGetPayload<{
   };
 }>;
 
-export async function handleOrderCancellation(orderId: string) {
-  if (!orderId) return;
+export async function handleOrderCancellation(orderId: string): Promise<boolean> {
+  if (!orderId) return false;
 
-  await db.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
     // Claim the state transition atomically. Stripe retries events and doesn't
     // guarantee their order, so only one worker is allowed to restock.
     const cancelled = await tx.order.updateMany({
@@ -34,7 +36,7 @@ export async function handleOrderCancellation(orderId: string) {
       data: { status: "CANCELLED" },
     });
 
-    if (cancelled.count === 0) return;
+    if (cancelled.count === 0) return false;
 
     const items = await tx.orderItem.findMany({ where: { orderId } });
 
@@ -49,12 +51,17 @@ export async function handleOrderCancellation(orderId: string) {
         },
       });
     }
+
+    return true;
   });
 }
 
 export async function confirmOrder(
   orderId: string,
-  paymentIntentId: string,
+  identifiers: {
+    paymentIntentId?: string | null;
+    checkoutSessionId?: string | null;
+  },
   storeSettings: any
 ) {
   if (!orderId) {
@@ -70,11 +77,44 @@ export async function confirmOrder(
         where: { id: orderId, status: "PENDING" },
         data: {
           status: "CONFIRMED",
-          stripePaymentIntentId: paymentIntentId,
+          ...(identifiers.paymentIntentId
+            ? { stripePaymentIntentId: identifiers.paymentIntentId }
+            : {}),
+          ...(identifiers.checkoutSessionId
+            ? { stripeCheckoutSessionId: identifiers.checkoutSessionId }
+            : {}),
         },
       });
 
       if (confirmed.count === 0) {
+        // A duplicate or out-of-order event may arrive after the order was
+        // already confirmed. Retain any identifier that was not available on
+        // the first event without sending another email.
+        if (identifiers.paymentIntentId || identifiers.checkoutSessionId) {
+          await tx.order.updateMany({
+            where: {
+              id: orderId,
+              status: {
+                in: [
+                  "CONFIRMED",
+                  "PROCESSING",
+                  "SHIPPED",
+                  "DELIVERED",
+                  "PARTIALLY_REFUNDED",
+                  "REFUNDED",
+                ],
+              },
+            },
+            data: {
+              ...(identifiers.paymentIntentId
+                ? { stripePaymentIntentId: identifiers.paymentIntentId }
+                : {}),
+              ...(identifiers.checkoutSessionId
+                ? { stripeCheckoutSessionId: identifiers.checkoutSessionId }
+                : {}),
+            },
+          });
+        }
         return null;
       }
 
@@ -117,15 +157,16 @@ export async function confirmOrder(
             qty: item.quantity,
             price: Number(item.price),
           })),
+          guestAccessToken:
+            updatedOrder.guestAccessTokenExpiresAt && !updatedOrder.userId
+              ? createGuestOrderToken(updatedOrder.id, updatedOrder.guestAccessTokenExpiresAt)
+              : undefined,
         };
 
         try {
           await sendOrderConfirmationEmail(customerEmail, orderData);
         } catch (emailError) {
-          console.error(
-            `Failed to send confirmation email for order ${orderId}:`,
-            emailError
-          );
+          logger.error("Failed to send confirmation email", { orderId });
         }
       }
 
@@ -140,15 +181,12 @@ export async function confirmOrder(
             }
           );
         } catch (emailError) {
-          console.error(
-            `Failed to send new order notification for order ${orderId}:`,
-            emailError
-          );
+          logger.error("Failed to send new order notification", { orderId });
         }
       }
     }
   } catch (error) {
-    console.error(`❌ Error in confirmOrder for order ${orderId}:`, error);
+    logger.error("Order confirmation failed", { orderId });
     throw error;
   }
 }

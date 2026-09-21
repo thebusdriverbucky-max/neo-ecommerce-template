@@ -1,5 +1,14 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { redis } from "./redis";
+import { logger } from "@/lib/logger";
+
+export type RateLimitResult = {
+  success: boolean;
+  remaining: number;
+  limit: number;
+  reset: number;
+  unavailable?: boolean;
+};
 
 export const rateLimits = {
   // Reviews: 10 requests per hour
@@ -72,12 +81,37 @@ export type RateLimitType = keyof typeof rateLimits;
 export async function checkRateLimit(
   identifier: string,
   type: RateLimitType
-) {
+): Promise<RateLimitResult> {
   const limiter = rateLimits[type];
 
   if (!limiter) {
     return { success: true, remaining: 999, limit: 999, reset: 0 };
   }
 
-  return await limiter.limit(identifier);
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    logger.warn("Rate limiter is not configured", { type });
+    return {
+      success: false,
+      remaining: 0,
+      limit: 0,
+      reset: Date.now() + 60_000,
+      unavailable: true,
+    };
+  }
+
+  try {
+    return await limiter.limit(identifier);
+  } catch (error: any) {
+    // Fail closed: an attacker must not be able to disable protection by
+    // taking Redis offline. Callers can expose this as HTTP 503 rather than
+    // pretending that the normal quota was exhausted.
+    logger.error("Rate limiter unavailable", { type, code: error?.code });
+    return {
+      success: false,
+      remaining: 0,
+      limit: 0,
+      reset: Date.now() + 60_000,
+      unavailable: true,
+    };
+  }
 }

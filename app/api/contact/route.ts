@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const contactSchema = z.object({
   name: z.string().min(2).max(100),
@@ -12,13 +13,12 @@ const contactSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const ip = request.headers.get("x-forwarded-for") || "127.0.0.1";
-    const rateLimit = await checkRateLimit(ip, "contact");
+    const rateLimit = await checkRateLimit(getTrustedClientIdentifier(request), "contact");
 
     if (!rateLimit.success) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429 }
+        { error: rateLimit.unavailable ? "Contact protection is temporarily unavailable. Please try again shortly." : "Too many requests. Please try again later." },
+        { status: rateLimit.unavailable ? 503 : 429 }
       );
     }
 

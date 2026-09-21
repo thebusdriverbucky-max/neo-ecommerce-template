@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -7,6 +8,7 @@ import { CheckCircle2, Package, Truck, CreditCard, MapPin, AlertCircle } from "l
 import { formatPrice } from "@/lib/utils";
 import { stripe } from "@/lib/stripe";
 import { confirmOrder } from "@/lib/order-confirmation";
+import { verifyGuestOrderToken } from "@/lib/guest-order-token";
 
 interface OrderDetailsPageProps {
   params: {
@@ -14,6 +16,7 @@ interface OrderDetailsPageProps {
   };
   searchParams: {
     success?: string;
+    guest_token?: string;
   };
 }
 
@@ -23,7 +26,23 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
 
   let order = await db.order.findUnique({
     where: { id: params.id },
-    include: {
+    select: {
+      id: true,
+      userId: true,
+      guestEmail: true,
+      guestAccessTokenHash: true,
+      guestAccessTokenExpiresAt: true,
+      status: true,
+      stripeCheckoutSessionId: true,
+      stripePaymentIntentId: true,
+      orderNumber: true,
+      createdAt: true,
+      currency: true,
+      subtotal: true,
+      tax: true,
+      shippingCost: true,
+      total: true,
+      trackingNumber: true,
       items: {
         include: {
           product: true,
@@ -37,68 +56,86 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
     notFound();
   }
 
-  // Fallback logic: if we are on success page but order is still PENDING, check Stripe
+  // The order token, session ownership, or admin role is checked before any
+  // Stripe recovery call. `success=true` is only UI state, never authorization.
+  const isAdmin = session?.user?.role === "ADMIN";
+  const isOwner = session?.user?.id && order.userId === session.user.id;
+  const isValidGuestToken = !order.userId && verifyGuestOrderToken(
+    searchParams.guest_token || "",
+    order.id,
+    order.guestAccessTokenHash,
+    order.guestAccessTokenExpiresAt,
+  );
+  const isGuestOrder = !order.userId && Boolean(order.guestEmail) && isValidGuestToken;
+
+  if (!isAdmin && !isOwner && !isGuestOrder) {
+    redirect("/login");
+  }
+
+  // Recovery is useful when Stripe delivered the payment but the webhook is
+  // delayed. It is deliberately available only to an already authorized
+  // viewer and never trusts the success redirect by itself.
   if (isSuccess && order.status === "PENDING") {
     try {
-      // We need to find the Stripe session or payment intent
-      // In our system, we store it in stripePaymentIntentId
-      const stripeId = order.stripePaymentIntentId;
+      let isPaid = false;
+      let paymentIntentId: string | null = order.stripePaymentIntentId;
+      let checkoutSessionId: string | null = order.stripeCheckoutSessionId;
 
-      if (stripeId) {
-        let isPaid = false;
-        let paymentIntentId = stripeId;
-
-        if (stripeId.startsWith('cs_')) {
-          // It's a checkout session
-          const stripeSession = await stripe.checkout.sessions.retrieve(stripeId);
-          if (stripeSession.payment_status === 'paid') {
-            isPaid = true;
-            paymentIntentId = stripeSession.payment_intent as string || stripeId;
-          }
-        } else if (stripeId.startsWith('pi_')) {
-          // It's a payment intent
-          const paymentIntent = await stripe.paymentIntents.retrieve(stripeId);
-          if (paymentIntent.status === 'succeeded') {
-            isPaid = true;
-          }
+      if (order.stripeCheckoutSessionId) {
+        const stripeSession = await stripe.checkout.sessions.retrieve(order.stripeCheckoutSessionId);
+        checkoutSessionId = stripeSession.id;
+        if (stripeSession.payment_status === "paid") {
+          isPaid = true;
+          paymentIntentId = typeof stripeSession.payment_intent === "string"
+            ? stripeSession.payment_intent
+            : null;
         }
+      } else if (order.stripePaymentIntentId) {
+        const paymentIntent = await stripe.paymentIntents.retrieve(order.stripePaymentIntentId);
+        if (paymentIntent.status === "succeeded") {
+          isPaid = true;
+        }
+      }
 
-        if (isPaid) {
-          const settings = await db.storeSettings.findFirst();
-          await confirmOrder(order.id, paymentIntentId, settings);
+      if (isPaid) {
+        const settings = await db.storeSettings.findFirst();
+        await confirmOrder(order.id, { paymentIntentId, checkoutSessionId }, settings);
 
-          // Refresh order data after confirmation
+        // Refresh order data after confirmation
           const updatedOrder = await db.order.findUnique({
             where: { id: params.id },
-            include: {
+            select: {
+              id: true,
+              userId: true,
+              guestEmail: true,
+              guestAccessTokenHash: true,
+              guestAccessTokenExpiresAt: true,
+              status: true,
+              stripeCheckoutSessionId: true,
+              stripePaymentIntentId: true,
+              orderNumber: true,
+              createdAt: true,
+              currency: true,
+              subtotal: true,
+              tax: true,
+              shippingCost: true,
+              total: true,
+              trackingNumber: true,
               items: {
                 include: {
                   product: true,
                 },
               },
-              shippingAddress: true,
-            },
-          });
-          if (updatedOrder) {
-            order = updatedOrder;
-          }
+            shippingAddress: true,
+          },
+        });
+        if (updatedOrder) {
+          order = updatedOrder;
         }
       }
     } catch (error) {
       console.error(`[FALLBACK] Error during manual order confirmation:`, error);
     }
-  }
-
-  // Проверка прав доступа. Guest order IDs are bearer secrets, but exposing an
-  // address and order details through a guessable/leaked URL is unsafe. Guest
-  // access is limited to Stripe's unguessable success redirect marker while
-  // signed-in users must own the order (or be admins).
-  const isAdmin = session?.user?.role === "ADMIN";
-  const isOwner = session?.user?.id && order.userId === session.user.id;
-  const isGuestOrder = !order.userId && Boolean(order.guestEmail) && isSuccess;
-
-  if (!isAdmin && !isOwner && !isGuestOrder) {
-    redirect("/login");
   }
 
   return (
@@ -150,11 +187,13 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
               {order.items.map((item) => (
                 <div key={item.id} className="p-4 flex gap-4">
-                  <div className="w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden flex-shrink-0">
-                    <img
+                  <div className="relative w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden flex-shrink-0">
+                    <Image
                       src={item.product.image}
                       alt={item.product.name}
-                      className="w-full h-full object-cover"
+                      fill
+                      sizes="80px"
+                      className="object-cover"
                     />
                   </div>
                   <div className="flex-1 min-w-0">

@@ -63,6 +63,7 @@ export const sendOrderConfirmationEmail = async (
     shippingCost?: number;
     storeName?: string;
     currencySymbol?: string;
+    guestAccessToken?: string;
     items: { name: string; qty: number; price: number }[]
   }
 ) => {
@@ -83,6 +84,7 @@ export const sendOrderConfirmationEmail = async (
     supportEmail,
     storeUrl,
     currencySymbol,
+    guestAccessToken: orderData.guestAccessToken,
   });
 
   return sendEmail({

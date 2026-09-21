@@ -17,7 +17,10 @@ export async function GET(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id!, "admin");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      return NextResponse.json(
+        { error: rateLimit.unavailable ? "Admin protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     // Total revenue

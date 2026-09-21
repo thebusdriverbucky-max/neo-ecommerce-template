@@ -1,6 +1,7 @@
 // File: lib/db.ts
 
 import { PrismaClient } from "@prisma/client";
+import { logger } from "@/lib/logger";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
 
@@ -9,7 +10,7 @@ export const db =
   new PrismaClient({
     log:
       process.env.NODE_ENV === "development"
-        ? ["query", "error", "warn"]
+        ? ["error", "warn"]
         : ["error"],
   });
 
@@ -36,6 +37,10 @@ export async function withDbRetry<T>(
       return await operation();
     } catch (error: any) {
       lastError = error;
+      logger.warn("Database operation failed", {
+        code: error?.code,
+        attempt,
+      });
       const isRetryable =
         RETRYABLE_PRISMA_CODES.has(error?.code) ||
         /accel|timeout|connect/i.test(String(error?.message ?? ""));

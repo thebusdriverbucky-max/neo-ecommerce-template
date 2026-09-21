@@ -46,7 +46,10 @@ export async function POST(
 
     const rateLimit = await checkRateLimit(session.user.id!, "reviews");
     if (!rateLimit.success) {
-      return new NextResponse("Too Many Requests", { status: 429 });
+      return new NextResponse(
+        rateLimit.unavailable ? "Review protection is temporarily unavailable" : "Too Many Requests",
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const body = await req.json();

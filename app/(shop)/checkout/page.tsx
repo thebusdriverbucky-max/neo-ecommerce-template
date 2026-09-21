@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/lib/cart-store";
@@ -16,6 +16,7 @@ export default function CheckoutPage() {
   const { items, getTotalPrice, discount } = useCart();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const checkoutRequestId = useRef(crypto.randomUUID());
 
 
   if (items.length === 0) {
@@ -33,10 +34,11 @@ export default function CheckoutPage() {
         body: JSON.stringify({
           items,
           shippingAddress: formData.shippingAddress,
-          billingAddressId: formData.billingAddressId,
+          billingAddressId: undefined,
           total: getTotalPrice(),
           discountCode: discount?.code,
           guestEmail: formData.shippingAddress.email,
+          checkoutRequestId: checkoutRequestId.current,
         }),
       });
 

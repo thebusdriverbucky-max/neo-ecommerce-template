@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useTransition } from 'react';
+import { useState, useEffect, useTransition, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { getSettings, updateSettings, StoreSettingsData } from '@/app/actions/settings';
 import { getPages, updatePage, togglePageVisibility, ContentPageData, seedCMSPages } from '@/app/actions/cms';
@@ -39,7 +39,7 @@ export default function SettingsPage() {
   const { register, handleSubmit, setValue, watch, reset } = useForm<StoreSettingsData>();
   const cmsForm = useForm<ContentPageData>();
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     const res = await getSettings();
     if (res.success && res.data) {
       const data = res.data as unknown as StoreSettingsData;
@@ -65,19 +65,19 @@ export default function SettingsPage() {
       setValue('ogImageUrl', data.ogImageUrl || '');
       setValue('siteLang', data.siteLang || 'en');
     }
-  };
+  }, [setValue]);
 
-  const loadPages = async () => {
+  const loadPages = useCallback(async () => {
     const res = await getPages();
     if (res.success && res.data) {
       setPages(res.data);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadSettings();
     loadPages();
-  }, [setValue]);
+  }, [loadSettings, loadPages]);
 
 
   const onSettingsSubmit = (data: StoreSettingsData) => {

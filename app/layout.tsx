@@ -14,6 +14,11 @@ import { db as prisma } from "@/lib/db";
 import { SettingsProvider } from "@/components/providers/settings-provider";
 import { StoreSettingsData } from "@/app/actions/settings";
 
+// Store settings and storefront content are read from PostgreSQL at request
+// time. Prevent Next.js from prerendering the whole app during a build when a
+// Neon pooler may be temporarily asleep or unavailable.
+export const dynamic = "force-dynamic";
+
 const inter = Inter({ subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {

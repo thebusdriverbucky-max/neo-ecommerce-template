@@ -12,7 +12,10 @@ export async function GET(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id, "wishlist");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      return NextResponse.json(
+        { error: rateLimit.unavailable ? "Wishlist protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const wishlist = await db.wishlist.findMany({
@@ -43,7 +46,10 @@ export async function POST(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id, "wishlist");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      return NextResponse.json(
+        { error: rateLimit.unavailable ? "Wishlist protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const body = await request.json();
@@ -95,7 +101,10 @@ export async function DELETE(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id, "wishlist");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      return NextResponse.json(
+        { error: rateLimit.unavailable ? "Wishlist protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const body = await request.json();

@@ -52,6 +52,16 @@ through exactly the same Stripe endpoint.
 3. Redeploy after changing environment variables.
 4. In Stripe Workbench, verify every delivery returns HTTP 200.
 
+## Reconciliation cron
+
+The application exposes `/api/cron/reconcile-orders` for delayed or failed
+webhook recovery. Configure a random `CRON_SECRET` in Vercel Preview and
+Production; Vercel Cron sends it as `Authorization: Bearer ...`. The job runs
+every ten minutes, confirms paid pending orders, releases stock only for
+expired or safely abandoned sessions, and leaves active Checkout Sessions
+pending. Never expose the cron secret to the browser or call this endpoint
+without its authorization header.
+
 ## Required test scenarios
 
 Use Stripe test mode and verify both Stripe Workbench and the admin order:

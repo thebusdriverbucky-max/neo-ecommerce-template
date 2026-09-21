@@ -7,7 +7,7 @@ datasource db {
   // Pooled connection (PgBouncer) for the app, unpooled for migrations.
   // Required for Neon serverless deployments.
   directUrl = env("DATABASE_URL_UNPOOLED")
-  url      = env("DATABASE_URL")
+  url       = env("DATABASE_URL")
 }
 
 model User {
@@ -24,29 +24,29 @@ model User {
   resetToken       String?
   resetTokenExpiry DateTime?
 
-  accounts       Account[]
-  sessions       Session[]
-  orders         Order[]
-  addresses      Address[]
-  reviews        Review[]
-  wishlists  Wishlist[]
+  accounts  Account[]
+  sessions  Session[]
+  orders    Order[]
+  addresses Address[]
+  reviews   Review[]
+  wishlists Wishlist[]
 
   @@index([email])
 }
 
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
-  type               String
-  provider           String
-  providerAccountId  String
-  refresh_token      String?
-  access_token       String?
-  expires_at         Int?
-  token_type         String?
-  scope              String?
-  id_token           String?
-  session_state      String?
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -55,11 +55,11 @@ model Account {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  sessionToken String @unique
-  userId    String
-  expires   DateTime
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
@@ -90,8 +90,8 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  orderItems OrderItem[]
-  reviews    Review[]
+  orderItems     OrderItem[]
+  reviews        Review[]
   wishlists      Wishlist[]
   inventoryAlert InventoryAlert?
 
@@ -108,30 +108,40 @@ model Cart {
 }
 
 model Order {
-  id            String      @id @default(cuid())
-  userId        String?
-  user          User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  guestEmail    String?
-  items         OrderItem[]
-  status        OrderStatus @default(PENDING)
-  subtotal      Decimal     @db.Decimal(10, 2)
-  tax           Decimal     @db.Decimal(10, 2)
-  total         Decimal     @db.Decimal(10, 2)
-  shippingCost  Decimal     @db.Decimal(10, 2)
-  currency      String      @default("USD")
-  
-  orderNumber   String?     @unique
-  trackingNumber String?
+  id             String      @id @default(cuid())
+  userId         String?
+  user           User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  guestEmail     String?
+  items          OrderItem[]
+  status         OrderStatus @default(PENDING)
+  subtotal       Decimal     @db.Decimal(10, 2)
+  discountAmount Decimal     @default(0) @db.Decimal(10, 2)
+  tax            Decimal     @db.Decimal(10, 2)
+  total          Decimal     @db.Decimal(10, 2)
+  shippingCost   Decimal     @db.Decimal(10, 2)
+  currency       String      @default("USD")
 
-  stripePaymentIntentId String?
-  refundedAmount       Decimal     @default(0) @db.Decimal(10, 2)
-  
+  orderNumber       String? @unique
+  trackingNumber    String?
+  checkoutRequestId String? @unique
+
+  // Checkout Session and PaymentIntent are different Stripe resources and
+  // must not share a database column.
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+  refundedAmount          Decimal @default(0) @db.Decimal(10, 2)
+
+  guestAccessTokenHash      String?   @unique
+  guestAccessTokenExpiresAt DateTime?
+
   shippingAddressId String?
-  shippingAddress   Address?  @relation("shipping", fields: [shippingAddressId], references: [id])
-  
+  shippingAddress   Address? @relation("shipping", fields: [shippingAddressId], references: [id])
+
   billingAddressId String?
-  billingAddress   Address?  @relation("billing", fields: [billingAddressId], references: [id])
-  
+  billingAddress   Address? @relation("billing", fields: [billingAddressId], references: [id])
+
+  refunds StripeRefund[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -154,24 +164,24 @@ model OrderItem {
 }
 
 model Address {
-  id           String  @id @default(cuid())
-  userId       String?
-  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  firstName    String
-  lastName     String
-  email        String
-  phone        String
-  street       String
-  city         String
-  state        String
-  postalCode   String
-  country      String
-  isDefault    Boolean @default(false)
-  
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  firstName  String
+  lastName   String
+  email      String
+  phone      String
+  street     String
+  city       String
+  state      String
+  postalCode String
+  country    String
+  isDefault  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   shippingOrders Order[] @relation("shipping")
   billingOrders  Order[] @relation("billing")
 
@@ -212,14 +222,16 @@ enum OrderStatus {
 }
 
 model DiscountCode {
-  id        String       @id @default(cuid())
-  code      String       @unique
-  type      DiscountType
-  value     Float
-  expiresAt DateTime?
-  isActive  Boolean      @default(true)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id             String         @id @default(cuid())
+  code           String         @unique
+  type           DiscountType
+  value          Float
+  stripeCouponId String?        @unique
+  expiresAt      DateTime?
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  stripeCoupons  StripeCoupon[]
 }
 
 enum DiscountType {
@@ -241,58 +253,58 @@ model Wishlist {
 }
 
 model Coupon {
-  id          String   @id @default(cuid())
-  code        String   @unique
+  id          String    @id @default(cuid())
+  code        String    @unique
   description String?
-  type        String   @default("percent")
-  value       Decimal  @db.Decimal(10, 2)
-  minAmount   Decimal  @default(0) @db.Decimal(10, 2)
-  maxDiscount Decimal? @db.Decimal(10, 2)
+  type        String    @default("percent")
+  value       Decimal   @db.Decimal(10, 2)
+  minAmount   Decimal   @default(0) @db.Decimal(10, 2)
+  maxDiscount Decimal?  @db.Decimal(10, 2)
   usageLimit  Int?
-  used        Int      @default(0)
+  used        Int       @default(0)
   expiresAt   DateTime?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([code])
   @@index([isActive])
 }
 
 model InventoryAlert {
-  id          String   @id @default(cuid())
-  productId   String   @unique
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  threshold   Int      @default(5)
+  id          String    @id @default(cuid())
+  productId   String    @unique
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  threshold   Int       @default(5)
   lastAlertAt DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 }
 
 model StoreSettings {
-  id               String   @id @default(cuid())
-  storeName        String?
-  storeEmail       String?
-  currency         String   @default("USD")
-  taxRate           Float    @default(0)
-  shippingCost      Float    @default(0)
-  freeShippingThreshold Float @default(500)
-  enabledCountries  String[]
-  enabledCategories String[]
-  tiktokUrl         String?
-  facebookUrl      String?
-  instagramUrl     String?
-  heroTitle        String?
-  heroSubtitle     String?
-  heroButtonText   String?
-  ctaTitle         String?
-  ctaSubtitle      String?
-  ctaButtonText    String?
-  footerCopyright  String?
-  faviconUrl       String?
-  ogImageUrl       String?
-  siteLang         String?  @default("en")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                    String   @id @default(cuid())
+  storeName             String?
+  storeEmail            String?
+  currency              String   @default("USD")
+  taxRate               Float    @default(0)
+  shippingCost          Float    @default(0)
+  freeShippingThreshold Float    @default(500)
+  enabledCountries      String[]
+  enabledCategories     String[]
+  tiktokUrl             String?
+  facebookUrl           String?
+  instagramUrl          String?
+  heroTitle             String?
+  heroSubtitle          String?
+  heroButtonText        String?
+  ctaTitle              String?
+  ctaSubtitle           String?
+  ctaButtonText         String?
+  footerCopyright       String?
+  faviconUrl            String?
+  ogImageUrl            String?
+  siteLang              String?  @default("en")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
 
 model ContentPage {
@@ -303,4 +315,48 @@ model ContentPage {
   isVisible Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model StripeEvent {
+  id          String    @id @default(cuid())
+  eventId     String    @unique
+  type        String
+  status      String    @default("PROCESSING")
+  error       String?   @db.Text
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model StripeRefund {
+  id              String    @id @default(cuid())
+  orderId         String
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stripeRefundId  String    @unique
+  paymentIntentId String
+  amount          Decimal   @db.Decimal(10, 2)
+  amountMinor     Int
+  currency        String
+  status          String
+  stripeCreatedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([orderId])
+  @@index([paymentIntentId])
+}
+
+model StripeCoupon {
+  id             String       @id @default(cuid())
+  discountCodeId String
+  discountCode   DiscountCode @relation(fields: [discountCodeId], references: [id], onDelete: Cascade)
+  stripeCouponId String       @unique
+  currency       String
+  amountMinor    Int
+  createdAt      DateTime     @default(now())
+
+  @@unique([discountCodeId, currency, amountMinor])
+  @@index([discountCodeId])
 }

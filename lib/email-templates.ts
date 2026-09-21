@@ -26,11 +26,12 @@ interface OrderConfirmationData {
   supportEmail: string;
   storeUrl: string;
   currencySymbol?: string;
+  guestAccessToken?: string;
 }
 
 export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): string => {
   const { orderNumber, orderId, total, subtotal, tax, shippingCost,
-    items, storeName, supportEmail, storeUrl, currencySymbol = '$' } = data;
+    items, storeName, supportEmail, storeUrl, currencySymbol = '$', guestAccessToken } = data;
 
   const itemsHtml = items.map((item, i) => `
     <tr style="background: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'}">
@@ -75,7 +76,9 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
     breakdownHtml += `<tr><td colspan="3" style="border-top:1px solid #e5e7eb;"></td></tr>`;
   }
 
-  const trackOrderUrl = storeUrl ? `${storeUrl}/orders/${orderId}` : '#';
+  const trackOrderUrl = storeUrl
+    ? `${storeUrl}/orders/${orderId}${guestAccessToken ? `?guest_token=${encodeURIComponent(guestAccessToken)}` : ''}`
+    : '#';
 
   return `
     <!DOCTYPE html>

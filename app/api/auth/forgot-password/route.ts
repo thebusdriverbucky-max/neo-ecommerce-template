@@ -4,6 +4,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email(),
@@ -11,11 +12,14 @@ const forgotPasswordSchema = z.object({
 
 export async function POST(req: Request) {
   try {
-    const ip = req.headers.get("x-forwarded-for") || "127.0.0.1";
+    const ip = getTrustedClientIdentifier(req);
     const rateLimit = await checkRateLimit(ip, "forgotPassword");
 
     if (!rateLimit.success) {
-      return new NextResponse("Too Many Requests", { status: 429 });
+      return new NextResponse(
+        rateLimit.unavailable ? "Password reset protection is temporarily unavailable" : "Too Many Requests",
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const body = await req.json();

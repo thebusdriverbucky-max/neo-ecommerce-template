@@ -57,7 +57,12 @@ export const orderItemSchema = z.object({
 
 export const createOrderSchema = z.object({
   items: z.array(orderItemSchema).min(1).max(50),
-  total: z.number().positive().max(1000000), // Максимальная сумма заказа 1,000,000
+  // Kept for backwards-compatible clients, but the server never trusts it.
+  total: z.number().nonnegative().max(1000000),
   shippingAddress: addressSchema.optional(),
   guestEmail: z.string().email().optional(),
+  shippingAddressId: z.string().cuid().optional(),
+  billingAddressId: z.string().cuid().optional(),
+  discountCode: z.string().trim().min(1).max(50).optional(),
+  checkoutRequestId: z.string().uuid().optional(),
 });

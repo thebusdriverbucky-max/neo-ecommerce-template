@@ -4,6 +4,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const resetPasswordSchema = z.object({
   token: z.string(),
@@ -13,10 +14,12 @@ const resetPasswordSchema = z.object({
 export async function POST(req: Request) {
   try {
     // Rate limit token guessing attempts
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
-    const { success } = await checkRateLimit(ip, "forgotPassword");
-    if (!success) {
-      return NextResponse.json({ message: "Too many requests" }, { status: 429 });
+    const rateLimit = await checkRateLimit(getTrustedClientIdentifier(req), "forgotPassword");
+    if (!rateLimit.success) {
+      return NextResponse.json(
+        { message: rateLimit.unavailable ? "Password reset protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const body = await req.json();

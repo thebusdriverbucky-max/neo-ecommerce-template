@@ -17,13 +17,15 @@ interface CheckoutFormProps {
   loading: boolean;
 }
 
+type AddressFormValues = z.input<typeof addressSchema>;
+
 const COUNTRIES_WITH_REQUIRED_STATE = ['US', 'CA', 'AU', 'IN'];
 
 export function CheckoutForm({ onSubmit, loading }: CheckoutFormProps) {
   const { settings } = useSettings();
   const enabledCountries = settings?.enabledCountries || [];
 
-  const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm({
+  const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<AddressFormValues>({
     resolver: zodResolver(addressSchema),
   });
 
