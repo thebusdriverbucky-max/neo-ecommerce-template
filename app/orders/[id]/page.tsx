@@ -89,10 +89,13 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
     }
   }
 
-  // Проверка прав доступа: владелец, админ или гостевой заказ
+  // Проверка прав доступа. Guest order IDs are bearer secrets, but exposing an
+  // address and order details through a guessable/leaked URL is unsafe. Guest
+  // access is limited to Stripe's unguessable success redirect marker while
+  // signed-in users must own the order (or be admins).
   const isAdmin = session?.user?.role === "ADMIN";
   const isOwner = session?.user?.id && order.userId === session.user.id;
-  const isGuestOrder = !order.userId && order.guestEmail;
+  const isGuestOrder = !order.userId && Boolean(order.guestEmail) && isSuccess;
 
   if (!isAdmin && !isOwner && !isGuestOrder) {
     redirect("/login");

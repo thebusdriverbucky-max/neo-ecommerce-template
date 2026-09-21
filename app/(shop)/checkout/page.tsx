@@ -13,7 +13,7 @@ import { redirect } from "next/navigation";
 export default function CheckoutPage() {
   const { data: session } = useSession();
   const router = useRouter();
-  const { items, getTotalPrice, clearCart, discount } = useCart();
+  const { items, getTotalPrice, discount } = useCart();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +48,6 @@ export default function CheckoutPage() {
 
       // Redirect to Stripe checkout
       if (url) {
-        clearCart();
         window.location.href = url;
       } else {
         throw new Error("No checkout URL returned");

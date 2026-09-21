@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
     switch (event.type) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
+        // For asynchronous payment methods Checkout can complete before funds
+        // are paid. payment_intent.succeeded will confirm it later.
+        if (session.payment_status !== "paid") break;
         const orderId = session.metadata?.orderId;
         const paymentIntentId = session.payment_intent as string;
         const sessionId = session.id;
@@ -92,17 +95,47 @@ export async function POST(request: NextRequest) {
         }
         break;
       }
-      case "charge.refunded": {
-        const charge = event.data.object as Stripe.Charge;
-        if (charge.payment_intent) {
+      case "refund.created":
+      case "refund.updated": {
+        const refund = event.data.object as Stripe.Refund;
+        if (refund.status !== "succeeded") break;
+
+        let paymentIntentId =
+          typeof refund.payment_intent === "string"
+            ? refund.payment_intent
+            : refund.payment_intent?.id;
+
+        if (!paymentIntentId && refund.charge) {
+          const chargeId =
+            typeof refund.charge === "string" ? refund.charge : refund.charge.id;
+          const charge = await stripe.charges.retrieve(chargeId);
+          paymentIntentId =
+            typeof charge.payment_intent === "string"
+              ? charge.payment_intent
+              : charge.payment_intent?.id;
+        }
+
+        if (paymentIntentId) {
           const order = await db.order.findFirst({
-            where: { stripePaymentIntentId: charge.payment_intent as string },
+            where: { stripePaymentIntentId: paymentIntentId },
           });
 
           if (order) {
+            const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+            const latestCharge =
+              typeof paymentIntent.latest_charge === "string"
+                ? await stripe.charges.retrieve(paymentIntent.latest_charge)
+                : paymentIntent.latest_charge;
+            const refundedAmountMinor = latestCharge?.amount_refunded ?? refund.amount;
+            const refundedAmount = refundedAmountMinor / 100;
+            const fullyRefunded = refundedAmountMinor >= paymentIntent.amount_received;
+
             await db.order.update({
               where: { id: order.id },
-              data: { status: "REFUNDED" },
+              data: {
+                refundedAmount,
+                status: fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED",
+              },
             });
           }
         }

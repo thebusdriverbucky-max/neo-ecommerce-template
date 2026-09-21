@@ -26,22 +26,20 @@ type UpdatedOrder = Prisma.OrderGetPayload<{
 export async function handleOrderCancellation(orderId: string) {
   if (!orderId) return;
 
-  const order = await db.order.findUnique({
-    where: { id: orderId },
-    include: { items: true },
-  });
-
-  if (!order || order.status === "CANCELLED") return;
-
   await db.$transaction(async (tx) => {
-    // Update order status
-    await tx.order.update({
-      where: { id: orderId },
+    // Claim the state transition atomically. Stripe retries events and doesn't
+    // guarantee their order, so only one worker is allowed to restock.
+    const cancelled = await tx.order.updateMany({
+      where: { id: orderId, status: "PENDING" },
       data: { status: "CANCELLED" },
     });
 
+    if (cancelled.count === 0) return;
+
+    const items = await tx.orderItem.findMany({ where: { orderId } });
+
     // Return stock (stock was reserved at order creation)
-    for (const item of order.items) {
+    for (const item of items) {
       await tx.product.update({
         where: { id: item.productId },
         data: {
@@ -66,15 +64,17 @@ export async function confirmOrder(
   // Use a transaction to ensure atomicity
   try {
     const updatedOrder = (await db.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({
-        where: { id: orderId },
-        include: {
-          items: true,
+      // Atomically claim PENDING -> CONFIRMED. Both checkout.session.completed
+      // and payment_intent.succeeded may arrive concurrently.
+      const confirmed = await tx.order.updateMany({
+        where: { id: orderId, status: "PENDING" },
+        data: {
+          status: "CONFIRMED",
+          stripePaymentIntentId: paymentIntentId,
         },
       });
 
-      // If order doesn't exist or is already confirmed, do nothing.
-      if (!order || order.status === "CONFIRMED") {
+      if (confirmed.count === 0) {
         return null;
       }
 
@@ -82,13 +82,8 @@ export async function confirmOrder(
       // created in POST /api/orders. Do NOT decrement it again here,
       // otherwise every paid order removes stock twice.
 
-      // Update order status to CONFIRMED
-      return tx.order.update({
+      return tx.order.findUnique({
         where: { id: orderId },
-        data: {
-          status: "CONFIRMED",
-          stripePaymentIntentId: paymentIntentId,
-        },
         include: {
           user: true,
           items: {
@@ -157,4 +152,3 @@ export async function confirmOrder(
     throw error;
   }
 }
-

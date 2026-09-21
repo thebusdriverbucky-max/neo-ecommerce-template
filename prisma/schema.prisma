@@ -124,6 +124,7 @@ model Order {
   trackingNumber String?
 
   stripePaymentIntentId String?
+  refundedAmount       Decimal     @default(0) @db.Decimal(10, 2)
   
   shippingAddressId String?
   shippingAddress   Address?  @relation("shipping", fields: [shippingAddressId], references: [id])
@@ -206,6 +207,7 @@ enum OrderStatus {
   SHIPPED
   DELIVERED
   CANCELLED
+  PARTIALLY_REFUNDED
   REFUNDED
 }
 

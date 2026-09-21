@@ -7,6 +7,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { createOrderSchema } from "@/lib/validations";
 import { generateOrderNumber } from "@/lib/order-number";
 import { z } from "zod";
+import Stripe from "stripe";
 
 export async function POST(request: NextRequest) {
   try {
@@ -287,7 +288,7 @@ export async function POST(request: NextRequest) {
     // on line items — that would charge tax a second time on top of the
     // total computed above. If no tax rate is configured in the admin,
     // no tax is applied at all.
-    const line_items = orderItemsData.map((item) => {
+    const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = orderItemsData.map((item) => {
       const product = products.find((p) => p.id === item.productId);
       return {
         price_data: {
@@ -302,7 +303,7 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    let stripeDiscounts = undefined;
+    let stripeDiscounts: Stripe.Checkout.SessionCreateParams.Discount[] | undefined;
     if (discountAmount > 0) {
       try {
         const coupon = await stripe.coupons.create({
@@ -314,18 +315,38 @@ export async function POST(request: NextRequest) {
         stripeDiscounts = [{ coupon: coupon.id }];
       } catch (error) {
         console.error("Stripe coupon creation failed:", error);
-        // Continue without discount if coupon creation fails
+        // Never silently charge more than the total accepted by the customer.
+        throw new Error("DISCOUNT_INITIALIZATION_FAILED");
       }
+    }
+
+    // Stripe must charge exactly the same tax that is persisted on the order.
+    // It is represented as a dedicated line item because Checkout line items
+    // above intentionally contain product prices before tax.
+    if (tax > 0) {
+      line_items.push({
+        price_data: {
+          currency,
+          product_data: { name: "Tax" },
+          unit_amount: Math.round(tax * 100),
+        },
+        quantity: 1,
+      });
     }
 
     let stripeSession;
     try {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+      if (!appUrl || !/^https?:\/\//i.test(appUrl)) {
+        throw new Error("NEXT_PUBLIC_APP_URL is not configured correctly");
+      }
+
       stripeSession = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         line_items,
         mode: "payment",
-        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/orders/${order.id}?success=true`,
-        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout?canceled=true`,
+        success_url: `${appUrl}/orders/${order.id}?success=true`,
+        cancel_url: `${appUrl}/checkout?canceled=true`,
         metadata: {
           orderId: order.id,
           ...(dbUserId && { userId: dbUserId }),
@@ -337,6 +358,8 @@ export async function POST(request: NextRequest) {
           },
         },
         discounts: stripeDiscounts,
+        // Keep inventory reservation and the pending-order limit aligned.
+        expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
         shipping_options: shippingCost > 0 ? [
           {
             shipping_rate_data: {
@@ -349,6 +372,10 @@ export async function POST(request: NextRequest) {
             },
           },
         ] : undefined,
+      }, {
+        // Protect against duplicate sessions/charges when the request is
+        // retried by a proxy or client after a timeout.
+        idempotencyKey: `checkout_${order.id}`,
       });
 
       const stripeIdToSave = (stripeSession.payment_intent as string) || stripeSession.id;
