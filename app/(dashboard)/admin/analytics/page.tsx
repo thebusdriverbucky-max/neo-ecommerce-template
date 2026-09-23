@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
 import {
@@ -41,29 +41,64 @@ export default function AdminAnalyticsPage() {
     revenueByDate: {},
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   if (session?.user?.role !== "ADMIN") {
     redirect("/");
   }
 
-  useEffect(() => {
-    fetchAnalytics();
-  }, []);
+  const fetchAnalytics = useCallback(async () => {
+    setError(null);
 
-  const fetchAnalytics = async () => {
     try {
       const response = await fetch("/api/admin/analytics");
-      const data = await response.json();
-      setAnalytics(data);
+      const data: Analytics | { error?: string } = await response.json();
+
+      if (!response.ok) {
+        throw new Error("error" in data && data.error
+          ? data.error
+          : "Failed to fetch analytics");
+      }
+
+      setAnalytics(data as Analytics);
     } catch (error) {
       console.error("Failed to fetch analytics:", error);
+      setError(error instanceof Error ? error.message : "Failed to fetch analytics");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchAnalytics();
+  }, [fetchAnalytics]);
 
   if (loading) {
     return <div className="text-center py-12">Loading...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <h1 className="text-3xl font-bold mb-8">
+          Store <span className="text-primary">Analytics</span>
+        </h1>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-red-800">
+          <p className="font-semibold">Analytics is temporarily unavailable</p>
+          <p className="mt-2 text-sm">{error}</p>
+          <button
+            type="button"
+            className="mt-4 rounded-md bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800"
+            onClick={() => {
+              setLoading(true);
+              void fetchAnalytics();
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const chartData = Object.entries(analytics.revenueByDate || {}).map(([date, revenue]) => ({

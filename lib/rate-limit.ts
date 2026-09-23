@@ -78,6 +78,27 @@ export const rateLimits = {
 
 export type RateLimitType = keyof typeof rateLimits;
 
+function unavailableRateLimitResult(type: RateLimitType): RateLimitResult {
+  if (process.env.NODE_ENV === "development") {
+    logger.warn("Rate limiter unavailable; allowing request in development", { type });
+    return {
+      success: true,
+      remaining: 999,
+      limit: 999,
+      reset: 0,
+      unavailable: true,
+    };
+  }
+
+  return {
+    success: false,
+    remaining: 0,
+    limit: 0,
+    reset: Date.now() + 60_000,
+    unavailable: true,
+  };
+}
+
 export async function checkRateLimit(
   identifier: string,
   type: RateLimitType
@@ -90,28 +111,17 @@ export async function checkRateLimit(
 
   if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
     logger.warn("Rate limiter is not configured", { type });
-    return {
-      success: false,
-      remaining: 0,
-      limit: 0,
-      reset: Date.now() + 60_000,
-      unavailable: true,
-    };
+    return unavailableRateLimitResult(type);
   }
 
   try {
     return await limiter.limit(identifier);
   } catch (error: any) {
-    // Fail closed: an attacker must not be able to disable protection by
-    // taking Redis offline. Callers can expose this as HTTP 503 rather than
-    // pretending that the normal quota was exhausted.
-    logger.error("Rate limiter unavailable", { type, code: error?.code });
-    return {
-      success: false,
-      remaining: 0,
-      limit: 0,
-      reset: Date.now() + 60_000,
-      unavailable: true,
-    };
+    // Development remains usable without an external Redis service. Every
+    // deployed environment still fails closed so an outage cannot disable
+    // production abuse protection.
+    const log = process.env.NODE_ENV === "development" ? logger.warn : logger.error;
+    log("Rate limiter unavailable", { type, code: error?.code });
+    return unavailableRateLimitResult(type);
   }
 }

@@ -145,22 +145,32 @@ test("uses only the Vercel-managed client IP for rate-limit identity", () => {
   assert.equal(getTrustedClientIdentifier(new Request("https://store.test", { headers: vercelHeaders })), "2001:db8::10");
 });
 
-test("fails closed when Upstash rate limiting is not configured", async () => {
+test("bypasses unavailable Upstash only in development and fails closed elsewhere", async () => {
+  const mutableEnv = process.env as Record<string, string | undefined>;
   const previousUrl = process.env.UPSTASH_REDIS_REST_URL;
   const previousToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const previousNodeEnv = process.env.NODE_ENV;
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
   try {
-    const result = await checkRateLimit("anonymous", "orders");
-    assert.equal(result.success, false);
-    assert.equal(result.unavailable, true);
-    assert.equal(result.limit, 0);
+    mutableEnv.NODE_ENV = "development";
+    const developmentResult = await checkRateLimit("anonymous", "orders");
+    assert.equal(developmentResult.success, true);
+    assert.equal(developmentResult.unavailable, true);
+
+    mutableEnv.NODE_ENV = "test";
+    const protectedResult = await checkRateLimit("anonymous", "orders");
+    assert.equal(protectedResult.success, false);
+    assert.equal(protectedResult.unavailable, true);
+    assert.equal(protectedResult.limit, 0);
   } finally {
     if (previousUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
     else process.env.UPSTASH_REDIS_REST_URL = previousUrl;
     if (previousToken === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
     else process.env.UPSTASH_REDIS_REST_TOKEN = previousToken;
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV;
+    else mutableEnv.NODE_ENV = previousNodeEnv;
   }
 });
 
