@@ -28,6 +28,10 @@ To set up, run, and deploy this project, please refer to our official guides:
 3. **Environment Variables Config:**  
    [https://www.ownyourwebsite.app/docs/env](https://www.ownyourwebsite.app/docs/env) — Information on which environment variables are required and how to obtain them.
 
+4. **Rate Limiting:**
+   See [RATE_LIMITING.md](./RATE_LIMITING.md) for the free Vercel WAF setup and
+   the optional Upstash protection layer.
+
 ## License Configuration
 
 All configuration values (including `LICENSE_KEY`, `LICENSE_PRODUCT`, or any other license-related keys) will be sent directly to your email address immediately after purchase. Simply paste them into your environment variables when configuring the project!
@@ -41,4 +45,4 @@ All configuration values (including `LICENSE_KEY`, `LICENSE_PRODUCT`, or any oth
 - **Payments:** Stripe
 - **Styling:** Tailwind CSS
 - **Email:** Resend
-- **Rate Limiting:** Upstash Redis
+- **Rate Limiting:** Vercel WAF; optional Upstash Redis for advanced limits

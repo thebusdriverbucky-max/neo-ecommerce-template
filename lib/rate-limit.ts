@@ -78,7 +78,16 @@ export const rateLimits = {
 
 export type RateLimitType = keyof typeof rateLimits;
 
-function unavailableRateLimitResult(type: RateLimitType): RateLimitResult {
+function externalRateLimitResult(): RateLimitResult {
+  return {
+    success: true,
+    remaining: 999,
+    limit: 999,
+    reset: 0,
+  };
+}
+
+function configuredLimiterUnavailableResult(type: RateLimitType): RateLimitResult {
   if (process.env.NODE_ENV === "development") {
     logger.warn("Rate limiter unavailable; allowing request in development", { type });
     return {
@@ -106,12 +115,22 @@ export async function checkRateLimit(
   const limiter = rateLimits[type];
 
   if (!limiter) {
-    return { success: true, remaining: 999, limit: 999, reset: 0 };
+    return externalRateLimitResult();
   }
 
-  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
-    logger.warn("Rate limiter is not configured", { type });
-    return unavailableRateLimitResult(type);
+  const hasUrl = Boolean(process.env.UPSTASH_REDIS_REST_URL);
+  const hasToken = Boolean(process.env.UPSTASH_REDIS_REST_TOKEN);
+
+  if (!hasUrl && !hasToken) {
+    // Upstash is optional. Deployments without it must configure an external
+    // edge limiter such as the single Vercel WAF rule documented in
+    // RATE_LIMITING.md.
+    return externalRateLimitResult();
+  }
+
+  if (hasUrl !== hasToken) {
+    logger.error("Rate limiter configuration is incomplete", { type });
+    return configuredLimiterUnavailableResult(type);
   }
 
   try {
@@ -122,6 +141,6 @@ export async function checkRateLimit(
     // production abuse protection.
     const log = process.env.NODE_ENV === "development" ? logger.warn : logger.error;
     log("Rate limiter unavailable", { type, code: error?.code });
-    return unavailableRateLimitResult(type);
+    return configuredLimiterUnavailableResult(type);
   }
 }

@@ -60,8 +60,9 @@
       in layouts or client components.
 - [ ] Add security headers: CSP, HSTS, Referrer-Policy, Permissions-Policy and
       frame restrictions.
-- [ ] Verify rate limiting fails safely when Redis is unavailable and cannot be
-      bypassed with forged proxy headers.
+- [ ] Configure and verify the external edge rate limit described in
+      `RATE_LIMITING.md`. If optional Redis limits are enabled, verify they fail
+      safely during an outage and cannot be bypassed with forged proxy headers.
 - [ ] Validate ownership of saved billing/shipping address IDs before attaching
       them to an order.
 - [ ] Review logs to ensure customer data, Stripe payloads and secrets are not
