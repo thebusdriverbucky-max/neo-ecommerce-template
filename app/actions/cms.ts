@@ -144,54 +144,12 @@ A: Contact us immediately with photos of the damage and your order number. We wi
     {
       slug: "terms",
       title: "Terms of Service",
-      content: `Agreement to Terms
-By accessing and using this website, you accept and agree to be bound by the terms and provision of this agreement.
-
-Use License
-Permission is granted to temporarily download one copy of the materials (information or software) on our website for personal, non-commercial transitory viewing only.
-
-Product Information
-• All product descriptions are accurate to the best of our knowledge
-• Prices are subject to change without notice
-• We reserve the right to limit quantities
-• Products are subject to availability
-
-Refund Policy
-Products may be returned within 30 days of purchase in original condition for a full refund. Shipping costs are non-refundable. Please contact our support team to initiate a return.
-
-Limitation of Liability
-In no event shall our company be liable for any damages (including, without limitation, damages for loss of data or profit, or due to business interruption) arising out of the use or inability to use the materials on our website.
-
-Changes to Terms
-We reserve the right to modify or amend these terms at any time. Your continued use of the website following the posting of revised Terms means that you accept and agree to the changes.`,
+      content: "Replace this starter text with terms reviewed for your business, products, pricing, fulfillment, cancellation, return, refund, and jurisdiction requirements before launch.",
     },
     {
       slug: "privacy",
       title: "Privacy Policy",
-      content: `Introduction
-We respect your privacy and are committed to protecting your personal data. This privacy policy explains how we collect, use, and protect your information.
-
-Information We Collect
-• Name and email address (for account creation)
-• Payment information (processed by Stripe - we don't store it)
-• Shipping address (for orders)
-• Usage data (cookies, analytics)
-
-How We Use Your Data
-• Process and fulfill orders
-• Send order confirmations and shipping updates
-• Improve our website and services
-• Comply with legal obligations
-
-Payment Security
-Payment information is processed securely by Stripe. We do not store credit card information on our servers. All transactions are encrypted and PCI-DSS compliant.
-
-Your Rights
-You have the right to:
-• Access your personal data
-• Request deletion of your data
-• Opt-out of marketing emails
-• Port your data to another service`,
+      content: "Replace this starter text with a privacy policy reviewed for the account, order, delivery, analytics, authentication, payment, and other personal data your deployment processes before launch.",
     },
     {
       slug: "shipping",

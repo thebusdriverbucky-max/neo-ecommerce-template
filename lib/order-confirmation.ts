@@ -12,6 +12,7 @@ import {
 } from "@/lib/email";
 import { createGuestOrderToken } from "@/lib/guest-order-token";
 import { logger } from "@/lib/logger";
+import { assertStripeIdentifiersOwnedByOrder } from "@/lib/stripe-payment-integrity";
 
 type UpdatedOrder = Prisma.OrderGetPayload<{
   include: {
@@ -71,10 +72,43 @@ export async function confirmOrder(
   // Use a transaction to ensure atomicity
   try {
     const updatedOrder = (await db.$transaction(async (tx) => {
+      const currentOrder = await tx.order.findUnique({
+        where: { id: orderId },
+        select: {
+          stripeCheckoutSessionId: true,
+          stripePaymentIntentId: true,
+        },
+      });
+      if (!currentOrder) return null;
+      assertStripeIdentifiersOwnedByOrder(currentOrder, identifiers);
+
+      const ownershipConditions: Prisma.OrderWhereInput[] = [
+        ...(identifiers.checkoutSessionId
+          ? [{
+              OR: [
+                { stripeCheckoutSessionId: null },
+                { stripeCheckoutSessionId: identifiers.checkoutSessionId },
+              ],
+            }]
+          : []),
+        ...(identifiers.paymentIntentId
+          ? [{
+              OR: [
+                { stripePaymentIntentId: null },
+                { stripePaymentIntentId: identifiers.paymentIntentId },
+              ],
+            }]
+          : []),
+      ];
+
       // Atomically claim PENDING -> CONFIRMED. Both checkout.session.completed
       // and payment_intent.succeeded may arrive concurrently.
       const confirmed = await tx.order.updateMany({
-        where: { id: orderId, status: "PENDING" },
+        where: {
+          id: orderId,
+          status: "PENDING",
+          AND: ownershipConditions,
+        },
         data: {
           status: "CONFIRMED",
           ...(identifiers.paymentIntentId
@@ -94,6 +128,7 @@ export async function confirmOrder(
           await tx.order.updateMany({
             where: {
               id: orderId,
+              AND: ownershipConditions,
               status: {
                 in: [
                   "CONFIRMED",
@@ -114,6 +149,17 @@ export async function confirmOrder(
                 : {}),
             },
           });
+
+          const retainedOrder = await tx.order.findUnique({
+            where: { id: orderId },
+            select: {
+              stripeCheckoutSessionId: true,
+              stripePaymentIntentId: true,
+            },
+          });
+          if (retainedOrder) {
+            assertStripeIdentifiersOwnedByOrder(retainedOrder, identifiers);
+          }
         }
         return null;
       }

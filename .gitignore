@@ -31,7 +31,6 @@ Thumbs.db
 .idea/
 tsconfig.tsbuildinfo
 
-# Prisma
-prisma/migrations/migration_lock.toml
+# Prisma migration history, including migration_lock.toml, is versioned.
 .vercel
 .env.production

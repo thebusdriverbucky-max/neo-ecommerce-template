@@ -16,6 +16,7 @@ import { buildDiscountedProductLineItems } from "@/lib/stripe-line-items";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
 import { createOrderSchema } from "@/lib/validations";
 import { stripe } from "@/lib/stripe";
+import { getStripeDeploymentId } from "@/lib/stripe-payment-integrity";
 
 type CheckoutItem = {
   productId: string;
@@ -404,9 +405,19 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
           success_url: makeSuccessUrl(appUrl, order.id, guestToken),
           cancel_url: `${new URL("/checkout", appUrl).toString()}?canceled=true`,
           customer_email: guestEmail || session?.user?.email || undefined,
-          metadata: { orderId: order.id, checkoutRequestId: requestId, ...(dbUserId && { userId: dbUserId }) },
+          metadata: {
+            orderId: order.id,
+            checkoutRequestId: requestId,
+            deploymentId: getStripeDeploymentId(),
+            ...(dbUserId && { userId: dbUserId }),
+          },
           payment_intent_data: {
-            metadata: { orderId: order.id, checkoutRequestId: requestId, ...(dbUserId && { userId: dbUserId }) },
+            metadata: {
+              orderId: order.id,
+              checkoutRequestId: requestId,
+              deploymentId: getStripeDeploymentId(),
+              ...(dbUserId && { userId: dbUserId }),
+            },
           },
           expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
         },

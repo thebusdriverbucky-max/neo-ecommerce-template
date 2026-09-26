@@ -1,2 +1,4 @@
 #!/bin/bash
-ts-node --compiler-options '{"module":"CommonJS"}' prisma/seed.ts
+set -euo pipefail
+
+npx tsx scripts/db-bootstrap.ts

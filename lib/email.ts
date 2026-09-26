@@ -1,20 +1,37 @@
-import { Resend } from 'resend';
+import { Resend } from "resend";
 import {
   getLowStockAlertEmailHtml,
   getNewOrderNotificationEmailHtml,
   getOrderConfirmationEmailHtml,
   getOrderStatusUpdateEmailHtml,
   getPasswordResetEmailHtml,
-} from './email-templates';
-import { Order, OrderItem, Product, Address, StoreSettings } from "@prisma/client";
+} from "./email-templates";
+import {
+  Order,
+  OrderItem,
+  Product,
+  Address,
+  StoreSettings,
+} from "@prisma/client";
 
 type OrderWithDetails = Order & {
   items: (OrderItem & { product: Product })[];
   shippingAddress: Address | null;
 };
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+const EMAIL_FROM = process.env.EMAIL_FROM || "onboarding@resend.dev";
+
+let resendClient: Resend | null = null;
+let resendClientApiKey: string | null = null;
+
+function getResendClient(apiKey: string): Resend {
+  if (!resendClient || resendClientApiKey !== apiKey) {
+    resendClient = new Resend(apiKey);
+    resendClientApiKey = apiKey;
+  }
+
+  return resendClient;
+}
 
 type EmailPayload = {
   to: string;
@@ -23,15 +40,18 @@ type EmailPayload = {
 };
 
 export const sendEmail = async (data: EmailPayload) => {
-  if (!process.env.RESEND_API_KEY) {
-    console.log('⚠️ RESEND_API_KEY not set. Logging email to console.');
-    console.log('📧 [MOCK EMAIL] To:', data.to);
-    console.log('Subject:', data.subject);
-    console.log('HTML:', data.html);
-    return { id: 'mock-id' };
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.log("⚠️ RESEND_API_KEY not set. Logging email to console.");
+    console.log("📧 [MOCK EMAIL] To:", data.to);
+    console.log("Subject:", data.subject);
+    console.log("HTML:", data.html);
+    return { id: "mock-id" };
   }
 
   try {
+    const resend = getResendClient(apiKey);
     const { data: emailData, error } = await resend.emails.send({
       from: EMAIL_FROM,
       to: data.to,
@@ -40,14 +60,14 @@ export const sendEmail = async (data: EmailPayload) => {
     });
 
     if (error) {
-      console.error('❌ Error sending email:', error);
+      console.error("❌ Error sending email:", error);
       return null;
     }
 
     console.log(`📧 Email sent: ${emailData?.id}`);
     return emailData;
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    console.error("❌ Error sending email:", error);
     return null;
   }
 };
@@ -64,13 +84,15 @@ export const sendOrderConfirmationEmail = async (
     storeName?: string;
     currencySymbol?: string;
     guestAccessToken?: string;
-    items: { name: string; qty: number; price: number }[]
-  }
+    items: { name: string; qty: number; price: number }[];
+  },
 ) => {
-  const storeName = orderData.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
-  const supportEmail = process.env.STORE_SUPPORT_EMAIL || 'support@example.com';
-  const storeUrl = process.env.NEXT_PUBLIC_STORE_URL || '';
-  const currencySymbol = orderData.currencySymbol || process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$';
+  const storeName =
+    orderData.storeName || process.env.NEXT_PUBLIC_STORE_NAME || "Store";
+  const supportEmail = process.env.STORE_SUPPORT_EMAIL || "support@example.com";
+  const storeUrl = process.env.NEXT_PUBLIC_STORE_URL || "";
+  const currencySymbol =
+    orderData.currencySymbol || process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || "$";
 
   const html = getOrderConfirmationEmailHtml({
     orderNumber: orderData.orderNumber,
@@ -98,10 +120,15 @@ export const sendOrderStatusUpdateEmail = async (
   userEmail: string,
   orderId: string,
   status: string,
-  trackingNumber?: string | null
+  trackingNumber?: string | null,
 ) => {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
-  const html = getOrderStatusUpdateEmailHtml(orderId, status, storeName, trackingNumber);
+  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "Store";
+  const html = getOrderStatusUpdateEmailHtml(
+    orderId,
+    status,
+    storeName,
+    trackingNumber,
+  );
 
   return sendEmail({
     to: userEmail,
@@ -110,14 +137,21 @@ export const sendOrderStatusUpdateEmail = async (
   });
 };
 
-export const sendNewOrderNotificationEmail = async (order: OrderWithDetails, storeSettings: StoreSettings & { storeEmail: string }) => {
+export const sendNewOrderNotificationEmail = async (
+  order: OrderWithDetails,
+  storeSettings: StoreSettings & { storeEmail: string },
+) => {
   if (!storeSettings.storeEmail) {
-    console.log('⚠️ Store email not set. Skipping new order notification.');
+    console.log("⚠️ Store email not set. Skipping new order notification.");
     return;
   }
 
-  const currencySymbol = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$';
-  const html = getNewOrderNotificationEmailHtml(order, storeSettings, currencySymbol);
+  const currencySymbol = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || "$";
+  const html = getNewOrderNotificationEmailHtml(
+    order,
+    storeSettings,
+    currencySymbol,
+  );
 
   return sendEmail({
     to: storeSettings.storeEmail,
@@ -126,21 +160,28 @@ export const sendNewOrderNotificationEmail = async (order: OrderWithDetails, sto
   });
 };
 
-export const sendPasswordResetEmail = async (userEmail: string, resetLink: string) => {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+export const sendPasswordResetEmail = async (
+  userEmail: string,
+  resetLink: string,
+) => {
+  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "Store";
   const html = getPasswordResetEmailHtml(resetLink, storeName);
 
   return sendEmail({
     to: userEmail,
-    subject: 'Password Reset Request',
+    subject: "Password Reset Request",
     html,
   });
 };
 
-export const sendLowStockAlert = async (productName: string, currentStock: number) => {
+export const sendLowStockAlert = async (
+  productName: string,
+  currentStock: number,
+) => {
   // In a real app, you'd probably fetch the admin email from DB or env
-  const adminEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_FROM || 'admin@example.com';
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+  const adminEmail =
+    process.env.ADMIN_EMAIL || process.env.EMAIL_FROM || "admin@example.com";
+  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "Store";
 
   const html = getLowStockAlertEmailHtml(productName, currentStock, storeName);
 

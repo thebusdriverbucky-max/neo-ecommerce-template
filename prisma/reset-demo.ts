@@ -1,4 +1,4 @@
-// prisma/seed.ts
+// Destructive local demo reset. Never run this from production build/deploy.
 
 import { db } from "@/lib/db";
 
@@ -258,6 +258,12 @@ Hours: Mon-Fri, 9 AM-6 PM EST`,
 
 async function main() {
   try {
+    if (process.env.ALLOW_DEMO_RESET !== "true") {
+      throw new Error(
+        "Destructive demo reset blocked. Set ALLOW_DEMO_RESET=true only for a disposable local database.",
+      );
+    }
+
     // Очистка в правильном порядке
     await db.review.deleteMany({});
     await db.wishlist.deleteMany({});
@@ -308,7 +314,7 @@ async function main() {
     console.log(`✓ Created/Updated ${pages.length} content pages`);
 
   } catch (error) {
-    console.error("Seed error:", error);
+    console.error("Demo reset error:", error);
     process.exit(1);
   } finally {
     await db.$disconnect();

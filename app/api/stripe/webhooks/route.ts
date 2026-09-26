@@ -3,6 +3,12 @@ import { stripe } from "@/lib/stripe";
 import { fromMinorUnits, normalizeCurrency } from "@/lib/money";
 import { logger } from "@/lib/logger";
 import {
+  assertCheckoutSessionMatchesOrder,
+  assertPaymentIntentMatchesOrder,
+  isStripeMetadataForThisDeployment,
+} from "@/lib/stripe-payment-integrity";
+import { constructStripeWebhookEvent } from "@/lib/stripe-webhook-signature";
+import {
   confirmOrder,
   handleOrderCancellation,
 } from "@/lib/order-confirmation";
@@ -39,28 +45,42 @@ async function processRefund(refund: Stripe.Refund) {
   const paymentIntentId = await resolvePaymentIntentId(refund);
   if (!paymentIntentId) return;
 
+  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  if (!isStripeMetadataForThisDeployment(paymentIntent.metadata)) return;
+
   const order = await db.order.findUnique({ where: { stripePaymentIntentId: paymentIntentId } });
   if (!order) return;
+  assertPaymentIntentMatchesOrder(paymentIntent, order);
 
   const currency = normalizeCurrency(refund.currency);
+  if (currency !== normalizeCurrency(order.currency)) {
+    throw new Error("Refund currency does not match order currency");
+  }
   const refundAmount = fromMinorUnits(refund.amount, currency);
-  await db.stripeRefund.upsert({
-    where: { stripeRefundId: refund.id },
-    create: {
+  const incomingStatus = refund.status || "pending";
+  await db.stripeRefund.createMany({
+    data: [{
       orderId: order.id,
       stripeRefundId: refund.id,
       paymentIntentId,
       amount: refundAmount,
       amountMinor: refund.amount,
       currency,
-      status: refund.status || "pending",
+      status: incomingStatus,
       stripeCreatedAt: new Date(refund.created * 1000),
+    }],
+    skipDuplicates: true,
+  });
+  await db.stripeRefund.updateMany({
+    where: {
+      stripeRefundId: refund.id,
+      status: { notIn: ["succeeded", "failed", "canceled"] },
     },
-    update: {
+    data: {
       amount: refundAmount,
       amountMinor: refund.amount,
       currency,
-      status: refund.status || "pending",
+      status: incomingStatus,
       stripeCreatedAt: new Date(refund.created * 1000),
     },
   });
@@ -72,10 +92,19 @@ async function processRefund(refund: Stripe.Refund) {
   if (!successfulRefunds._sum.amountMinor) return;
 
   const refundedAmountMinor = successfulRefunds._sum.amountMinor || 0;
-  const paidAmountMinor = await stripe.paymentIntents.retrieve(paymentIntentId).then((intent) => intent.amount_received);
+  const paidAmountMinor = paymentIntent.amount_received;
+  if (refundedAmountMinor > paidAmountMinor) {
+    throw new Error("Cumulative refunds exceed the paid amount");
+  }
 
-  await db.order.update({
-    where: { id: order.id },
+  await db.order.updateMany({
+    where: {
+      id: order.id,
+      status: refundedAmountMinor >= paidAmountMinor
+        ? { in: ["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "PARTIALLY_REFUNDED", "REFUNDED"] }
+        : { in: ["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "PARTIALLY_REFUNDED"] },
+      refundedAmount: { lte: successfulRefunds._sum.amount || 0 },
+    },
     data: {
       refundedAmount: successfulRefunds._sum.amount || 0,
       status: refundedAmountMinor >= paidAmountMinor ? "REFUNDED" : "PARTIALLY_REFUNDED",
@@ -87,6 +116,7 @@ async function processEvent(event: Stripe.Event) {
   switch (event.type) {
     case "checkout.session.completed": {
       const checkoutSession = event.data.object as Stripe.Checkout.Session;
+      if (!isStripeMetadataForThisDeployment(checkoutSession.metadata)) return;
       if (checkoutSession.payment_status !== "paid") return;
 
       const paymentIntentId = typeof checkoutSession.payment_intent === "string"
@@ -99,6 +129,7 @@ async function processEvent(event: Stripe.Event) {
           : await db.order.findUnique({ where: { stripeCheckoutSessionId: checkoutSession.id } });
 
       if (!order) return;
+      assertCheckoutSessionMatchesOrder(checkoutSession, order);
       const settings = await db.storeSettings.findFirst();
       await confirmOrder(order.id, {
         paymentIntentId,
@@ -109,8 +140,10 @@ async function processEvent(event: Stripe.Event) {
 
     case "payment_intent.succeeded": {
       const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      if (!isStripeMetadataForThisDeployment(paymentIntent.metadata)) return;
       const order = await findOrderForPaymentIntent(paymentIntent.id, paymentIntent.metadata.orderId);
       if (!order) return;
+      assertPaymentIntentMatchesOrder(paymentIntent, order);
 
       const settings = await db.storeSettings.findFirst();
       await confirmOrder(order.id, { paymentIntentId: paymentIntent.id }, settings);
@@ -120,20 +153,21 @@ async function processEvent(event: Stripe.Event) {
     case "payment_intent.payment_failed": {
       // A failed attempt does not necessarily end Checkout. The customer can
       // retry the same Session, so release stock only on session.expired.
-      logger.warn("Stripe payment attempt failed", {
-        paymentIntentId: (event.data.object as Stripe.PaymentIntent).id,
-      });
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      if (!isStripeMetadataForThisDeployment(paymentIntent.metadata)) return;
+      logger.warn("Stripe payment attempt failed", { paymentIntentId: paymentIntent.id });
       return;
     }
 
     case "checkout.session.expired": {
       const checkoutSession = event.data.object as Stripe.Checkout.Session;
-      if (checkoutSession.metadata?.orderId) {
-        await handleOrderCancellation(checkoutSession.metadata.orderId);
-      } else {
-        const order = await db.order.findUnique({ where: { stripeCheckoutSessionId: checkoutSession.id } });
-        if (order) await handleOrderCancellation(order.id);
-      }
+      if (!isStripeMetadataForThisDeployment(checkoutSession.metadata)) return;
+      const order = checkoutSession.metadata?.orderId
+        ? await db.order.findUnique({ where: { id: checkoutSession.metadata.orderId } })
+        : await db.order.findUnique({ where: { stripeCheckoutSessionId: checkoutSession.id } });
+      if (!order) return;
+      assertCheckoutSessionMatchesOrder(checkoutSession, order);
+      await handleOrderCancellation(order.id);
       return;
     }
 
@@ -156,7 +190,7 @@ export async function POST(request: NextRequest) {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
+    event = constructStripeWebhookEvent(stripe, body, signature, webhookSecret);
   } catch {
     logger.warn("Stripe webhook signature verification failed");
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });

@@ -1,0 +1,61 @@
+name: Template CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: template_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d template_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/template_ci?schema=public
+      DATABASE_URL_UNPOOLED: postgresql://postgres:postgres@127.0.0.1:5432/template_ci?schema=public
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ci-nextauth-secret-at-least-32-characters
+      GUEST_ORDER_TOKEN_SECRET: ci-guest-order-secret-at-least-32-characters
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      STRIPE_SECRET_KEY: sk_test_ci_placeholder
+      STRIPE_WEBHOOK_SECRET: whsec_ci_placeholder
+      STRIPE_DEPLOYMENT_ID: ecommerce-ci
+      CRON_SECRET: ci-cron-secret-at-least-32-characters
+      LICENSE_KEY: ci-license
+      LICENSE_SERVER_URL: http://127.0.0.1:9
+      LICENSE_SERVER_SECRET: ci-license-secret-at-least-32-characters
+      LICENSE_PRODUCT: neo-ecommerce-full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Use pinned npm
+        run: npm install --global npm@10.8.2
+      - run: npm ci
+      - run: npm run manifest:validate
+      - run: npm test
+      - run: npx tsc --noEmit --incremental false
+      - name: Clean production deployment contract
+        run: npm run build
+      - name: Bootstrap is repeatable
+        run: npm run db:bootstrap
+      - name: Migration history matches Prisma schema
+        run: npx prisma migrate diff --from-url "$DATABASE_URL_UNPOOLED" --to-schema-datamodel prisma/schema.prisma --exit-code

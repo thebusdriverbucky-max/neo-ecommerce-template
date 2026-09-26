@@ -11,13 +11,22 @@ Required variables:
 ```env
 NEXT_PUBLIC_APP_URL=https://your-store.example
 STRIPE_SECRET_KEY=sk_test_xxx
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_DEPLOYMENT_ID=store-your-store-example
+CRON_SECRET=generate-a-long-random-value
 ```
 
-For a real production store replace the test keys with `sk_live_...` and
-`pk_live_...`, then create a separate endpoint while Stripe Dashboard is in live
-mode. Never put secret keys in `NEXT_PUBLIC_*` variables.
+For a real production store replace the test secret key with `sk_live_...`, then
+create a separate endpoint while Stripe Dashboard is in live mode. The included
+Checkout is created on the server and redirects to Stripe's hosted page, so it
+does not use a browser publishable key. Never put the Stripe secret key or
+webhook signing secret in a `NEXT_PUBLIC_*` variable.
+
+`STRIPE_DEPLOYMENT_ID` is a stable, non-secret identifier for this site. Use a
+different value for every store that shares a Stripe account. The application
+writes it to new Checkout Session and PaymentIntent metadata and accepts only
+objects carrying this store's value. Correctly signed events belonging to other
+deployments are acknowledged without changing local orders.
 
 ## Webhook endpoint
 
@@ -43,24 +52,44 @@ distinguishes partial and complete refunds.
 Each deployed project can have its own endpoint. Multiple endpoints can belong
 to one Stripe account, but each endpoint has a different `whsec_...`. Do not copy
 one project's webhook secret into another unless both deployments receive events
-through exactly the same Stripe endpoint.
+through exactly the same Stripe endpoint. Keep a unique `STRIPE_DEPLOYMENT_ID`
+even when deployments intentionally share an endpoint.
 
 ## Vercel
 
 1. Configure variables separately for Preview and Production.
 2. Ensure `NEXT_PUBLIC_APP_URL` points to the deployment being tested.
-3. Redeploy after changing environment variables.
-4. In Stripe Workbench, verify every delivery returns HTTP 200.
+3. Give Preview and Production distinct `STRIPE_DEPLOYMENT_ID` values when they
+   share a Stripe account.
+4. Redeploy after changing environment variables.
+5. In Stripe Workbench, verify every delivery returns HTTP 200.
 
 ## Reconciliation cron
 
 The application exposes `/api/cron/reconcile-orders` for delayed or failed
 webhook recovery. Configure a random `CRON_SECRET` in Vercel Preview and
-Production; Vercel Cron sends it as `Authorization: Bearer ...`. The job runs
-every ten minutes, confirms paid pending orders, releases stock only for
-expired or safely abandoned sessions, and leaves active Checkout Sessions
-pending. Never expose the cron secret to the browser or call this endpoint
-without its authorization header.
+Production; Vercel Cron sends it as `Authorization: Bearer ...`. The committed
+schedule runs once per day and fits Hobby's technical cron frequency limit, but
+Hobby is only suitable for personal, non-commercial demos and previews. Use a
+commercially permitted Vercel plan or another suitable host for a production
+store. Vercel does not guarantee the exact execution time on Hobby; eligible
+paid plans may use a more frequent schedule. The job confirms paid pending
+orders, releases stock only for expired or safely abandoned sessions, and
+leaves active Checkout Sessions pending. Never expose the cron secret to the
+browser or call this endpoint without its authorization header.
+
+The webhook remains the source of truth; cron is a delayed recovery safety net,
+not the normal payment confirmation path.
+
+## Upgrading an existing store
+
+Checkout Sessions and PaymentIntents created by an older release may not contain
+`STRIPE_DEPLOYMENT_ID` metadata. This release deliberately does not reconcile or
+mutate those unmarked Stripe objects because it cannot safely distinguish them
+from another site in a shared Stripe account. Before deploying the upgrade to an
+active store, resolve existing pending orders under the old release or review
+them manually in Stripe and the admin dashboard. New checkouts created after the
+upgrade carry the marker automatically.
 
 ## Required test scenarios
 
@@ -78,6 +107,10 @@ Use Stripe test mode and verify both Stripe Workbench and the admin order:
 10. Test paid and free shipping.
 11. Create a partial refund; order becomes `PARTIALLY_REFUNDED`.
 12. Refund the remaining amount; order becomes `REFUNDED`.
+13. Send a correctly signed event carrying another deployment ID; it must return
+    success without changing an order in this store.
+14. Verify a wrong amount, currency, Order ID, Session ID, or PaymentIntent ID
+    cannot confirm an order.
 
 The success redirect is not the source of truth. Order state is driven by
 signature-verified Stripe webhooks; the success page only provides a recovery

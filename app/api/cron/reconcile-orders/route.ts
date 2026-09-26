@@ -3,6 +3,12 @@ import { stripe } from "@/lib/stripe";
 import { confirmOrder, handleOrderCancellation } from "@/lib/order-confirmation";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 import { logger } from "@/lib/logger";
+import {
+  assertCheckoutSessionMatchesOrder,
+  assertPaymentIntentMatchesOrder,
+  isStripeMetadataForThisDeployment,
+} from "@/lib/stripe-payment-integrity";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -19,6 +25,8 @@ type PendingOrder = {
   createdAt: Date;
   stripeCheckoutSessionId: string | null;
   stripePaymentIntentId: string | null;
+  total: Prisma.Decimal;
+  currency: string;
 };
 
 type SessionLookup = {
@@ -57,7 +65,11 @@ async function findOrphanedCheckoutSessions(
 
     for (const session of page.data) {
       const orderId = session.metadata?.orderId;
-      if (orderId && orderIds.has(orderId)) {
+      if (
+        orderId
+        && orderIds.has(orderId)
+        && isStripeMetadataForThisDeployment(session.metadata)
+      ) {
         sessionsByOrderId.set(orderId, session);
       }
     }
@@ -95,6 +107,8 @@ export async function GET(request: NextRequest) {
         createdAt: true,
         stripeCheckoutSessionId: true,
         stripePaymentIntentId: true,
+        total: true,
+        currency: true,
       },
       orderBy: { createdAt: "asc" },
       take: MAX_PENDING_ORDERS_PER_RUN,
@@ -128,6 +142,7 @@ export async function GET(request: NextRequest) {
         if (!checkoutSessionId) {
           checkoutSession = sessionLookup.sessionsByOrderId.get(order.id) || null;
           if (checkoutSession) {
+            assertCheckoutSessionMatchesOrder(checkoutSession, order);
             checkoutSessionId = checkoutSession.id;
             paymentIntentId = typeof checkoutSession.payment_intent === "string"
               ? checkoutSession.payment_intent
@@ -145,6 +160,7 @@ export async function GET(request: NextRequest) {
 
         if (checkoutSessionId) {
           checkoutSession = checkoutSession || await stripe.checkout.sessions.retrieve(checkoutSessionId);
+          assertCheckoutSessionMatchesOrder(checkoutSession, order);
 
           if (checkoutSession.payment_status === "paid") {
             await confirmOrder(order.id, {
@@ -169,6 +185,7 @@ export async function GET(request: NextRequest) {
 
         if (paymentIntentId) {
           const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+          assertPaymentIntentMatchesOrder(paymentIntent, order);
           if (paymentIntent.status === "succeeded") {
             await confirmOrder(order.id, { paymentIntentId }, await getStoreSettings());
             summary.confirmed += 1;
