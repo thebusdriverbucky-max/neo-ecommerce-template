@@ -9,6 +9,7 @@ import { formatPrice } from "@/lib/utils";
 import { stripe } from "@/lib/stripe";
 import { confirmOrder } from "@/lib/order-confirmation";
 import { verifyGuestOrderToken } from "@/lib/guest-order-token";
+import { CheckoutCartSync } from "@/components/shop/checkout-cart-sync";
 
 interface OrderDetailsPageProps {
   params: {
@@ -140,7 +141,18 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
-      {isSuccess && (
+      <CheckoutCartSync
+        orderId={order.id}
+        status={order.status}
+        items={order.items.map((item) => ({ productId: item.productId, quantity: item.quantity }))}
+      />
+      {isSuccess && order.status === "PENDING" && (
+        <p role="status" className="mb-6 rounded-lg bg-amber-50 p-4 text-amber-900">
+          Payment confirmation is pending. Your cart will update once payment is confirmed.
+          If this message remains, refresh this page later; do not pay again.
+        </p>
+      )}
+      {isSuccess && ["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED"].includes(order.status) && (
         <div className="flex flex-col items-center justify-center mb-12 text-center bg-green-50 dark:bg-green-900/20 p-8 rounded-2xl border border-green-100 dark:border-green-900/30">
           <div className="mb-4 text-green-600 dark:text-green-500">
             <CheckCircle2 size={64} strokeWidth={1.5} />

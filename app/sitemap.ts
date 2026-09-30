@@ -1,5 +1,6 @@
 import { MetadataRoute } from "next";
 import { db } from "@/lib/db";
+import { CMS_DEFAULT_PAGES } from "@/lib/cms-defaults";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,43 +27,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "daily",
       priority: 0.9,
     },
-    {
-      url: `${baseUrl}/about`,
-      lastModified: new Date(),
-      changeFrequency: "monthly",
-      priority: 0.5,
-    },
-    {
-      url: `${baseUrl}/contact`,
-      lastModified: new Date(),
-      changeFrequency: "monthly",
-      priority: 0.5,
-    },
-    {
-      url: `${baseUrl}/faq`,
-      lastModified: new Date(),
-      changeFrequency: "monthly",
-      priority: 0.5,
-    },
-    {
-      url: `${baseUrl}/privacy`,
-      lastModified: new Date(),
-      changeFrequency: "yearly",
-      priority: 0.3,
-    },
-    {
-      url: `${baseUrl}/terms`,
-      lastModified: new Date(),
-      changeFrequency: "yearly",
-      priority: 0.3,
-    },
-    {
-      url: `${baseUrl}/shipping`,
-      lastModified: new Date(),
-      changeFrequency: "monthly",
-      priority: 0.5,
-    },
+
   ];
+
+  const savedPages = await db.contentPage.findMany({
+    select: { slug: true, isVisible: true, updatedAt: true },
+  });
+  const cmsPages: MetadataRoute.Sitemap = CMS_DEFAULT_PAGES.flatMap(page => {
+    const saved = savedPages.find(candidate => candidate.slug === page.slug);
+    return saved?.isVisible === false ? [] : [{
+      url: `${baseUrl}/${page.slug}`,
+      lastModified: saved?.updatedAt,
+      changeFrequency: "monthly" as const,
+      priority: 0.5,
+    }];
+  });
 
   // Dynamic product pages
   const products = await db.product.findMany({
@@ -77,5 +56,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: 0.8,
   }));
 
-  return [...staticPages, ...productPages];
+  return [...staticPages, ...cmsPages, ...productPages];
 }

@@ -2,16 +2,34 @@
 
 import { z } from "zod";
 
+// Do not coerce null/empty inputs to zero, or truncate fractional inventory.
+const requiredNumber = (label: string) => z.union([
+  z.number(),
+  z.string().trim().min(1, `${label} is required`).transform(Number),
+]).pipe(z.number({ error: `${label} must be a valid number` }).finite());
+
+export const productImageSchema = z.string().trim().url("Enter a valid image URL")
+  .refine(value => /^https?:\/\//i.test(value), "Image URL must use HTTP or HTTPS");
+
 export const productSchema = z.object({
-  name: z.string().min(1, "Product name is required"),
-  slug: z.string().min(1, "Slug is required"),
-  description: z.string().min(10, "Description must be at least 10 characters"),
-  price: z.coerce.number().positive("Price must be positive"),
-  category: z.string().min(1, "Category is required"),
-  stock: z.coerce.number().nonnegative("Stock cannot be negative"),
-  image: z.string().url("Invalid image URL"),
-  images: z.array(z.string().url("Invalid image URL")).default([]),
+  name: z.string().trim().min(1, "Product name is required"),
+  slug: z.string().trim().min(1, "Slug is required")
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers and single hyphens"),
+  description: z.string().trim().min(10, "Description must be at least 10 characters"),
+  price: requiredNumber("Price").pipe(z.number().positive("Price must be positive")
+    .max(99999999.99, "Price is too large")
+    .refine(value => Math.abs(value * 100 - Math.round(value * 100)) < 0.000001,
+      "Price must have at most 2 decimal places")),
+  category: z.string().trim().min(1, "Category is required"),
+  stock: requiredNumber("Stock").pipe(z.number().int("Stock must be a whole number")
+    .nonnegative("Stock cannot be negative").max(2147483647, "Stock is too large")),
+  image: productImageSchema,
+  // Empty optional gallery rows are not images; malformed nonempty URLs still fail.
+  images: z.array(z.string()).default([])
+    .transform(values => values.map(value => value.trim()).filter(Boolean))
+    .pipe(z.array(productImageSchema).max(4, "Use at most 4 additional images")),
   featured: z.boolean().default(false),
+  isArchived: z.boolean().optional(),
 });
 
 export const addressSchema = z.object({

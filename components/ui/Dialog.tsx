@@ -18,6 +18,7 @@ interface DialogProps {
   cancelText?: string;
   isDangerous?: boolean;
   isLoading?: boolean;
+  closeOnConfirm?: boolean;
   extraAction?: React.ReactNode;
   size?: "sm" | "md" | "lg" | "xl" | "2xl";
 }
@@ -34,12 +35,13 @@ const Dialog = ({
   cancelText = "Cancel",
   isDangerous = false,
   isLoading = false,
+  closeOnConfirm = true,
   extraAction,
   size = "md",
 }: DialogProps) => {
   const handleConfirm = async () => {
     await onConfirm();
-    onOpenChange(false);
+    if (closeOnConfirm) onOpenChange(false);
   };
 
   const handleCancel = () => {

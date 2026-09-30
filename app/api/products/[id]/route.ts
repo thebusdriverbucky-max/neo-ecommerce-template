@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { productSchema } from "@/lib/validations";
+import { productFieldErrors, productWriteError } from "@/lib/product-feedback";
 
 export async function GET(
   request: NextRequest,
@@ -40,23 +42,18 @@ export async function PUT(
 
   try {
     const body = await request.json();
-    const { name, slug, description, price, currency, image, images, category, stock, featured } =
-      body;
+    const parsed = productSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({
+        error: "Please correct the highlighted fields.",
+        fieldErrors: productFieldErrors(parsed.error.issues),
+        details: parsed.error.issues,
+      }, { status: 400 });
+    }
 
     const updatedProduct = await db.product.update({
       where: { id: params.id },
-      data: {
-        name,
-        slug,
-        description,
-        price,
-        currency,
-        image,
-        images: images || [],
-        category,
-        stock,
-        featured,
-      },
+      data: parsed.data,
     });
 
     revalidatePath("/products");
@@ -65,11 +62,8 @@ export async function PUT(
 
     return NextResponse.json(updatedProduct);
   } catch (error) {
-    console.error("Product update error:", error);
-    return NextResponse.json(
-      { error: "Failed to update product" },
-      { status: 500 }
-    );
+    const failure = productWriteError(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }
 

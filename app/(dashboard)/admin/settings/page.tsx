@@ -109,7 +109,7 @@ export default function SettingsPage() {
         cmsForm.reset();
         loadPages();
       } else {
-        toast.error('Failed to save page');
+        toast.error(res.error || 'Failed to save page');
       }
     });
   };
@@ -517,17 +517,18 @@ export default function SettingsPage() {
                 startTransition(async () => {
                   const res = await seedCMSPages();
                   if (res.success) {
-                    toast.success('Default pages seeded');
+                    toast.success('Missing pages added; existing content was preserved');
                     loadPages();
                   } else {
                     toast.error('Failed to seed pages');
                   }
                 });
               }} variant="outline" size="sm">
-                Seed Default Pages
+                Add Missing Default Pages
               </Button>
             </div>
           </div>
+          <p className="text-sm text-gray-600 mb-3">Title, content and visibility control the matching public URL. Hidden pages return 404. Content accepts plain text or sanitized HTML. Default pages are provisioned during deployment; the button only repairs missing pages and never overwrites edits.</p>
           <p className="text-xs text-gray-400 text-center mt-2 mb-3 md:hidden">
             ← Scroll left/right to see all actions →
           </p>
@@ -597,7 +598,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Slug</label>
-            <Input {...cmsForm.register('slug', { required: true })} placeholder="page-slug" disabled />
+            <Input {...cmsForm.register('slug', { required: true })} placeholder="page-slug" readOnly />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>

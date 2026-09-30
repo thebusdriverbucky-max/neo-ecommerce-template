@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { productFieldErrors, productWriteError } from "@/lib/product-feedback";
 import { auth } from "@/lib/auth";
 import { productSchema } from "@/lib/validations";
 
@@ -65,7 +66,7 @@ export async function POST(request: NextRequest) {
     const parsed = productSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "Invalid input", details: parsed.error.issues },
+        { error: "Please correct the highlighted fields.", fieldErrors: productFieldErrors(parsed.error.issues), details: parsed.error.issues },
         { status: 400 }
       );
     }
@@ -86,6 +87,7 @@ export async function POST(request: NextRequest) {
         category: data.category,
         stock: data.stock,
         featured: data.featured,
+        isArchived: data.isArchived ?? false,
       },
     });
 
@@ -94,10 +96,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(product, { status: 201 });
   } catch (error) {
-    console.error("Product creation error:", error);
-    return NextResponse.json(
-      { error: "Failed to create product" },
-      { status: 500 }
-    );
+    const failure = productWriteError(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

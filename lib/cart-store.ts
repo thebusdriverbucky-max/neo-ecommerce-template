@@ -18,9 +18,17 @@ export interface Discount {
   value: number;
 }
 
+export interface CheckoutCartItem {
+  productId: string;
+  quantity: number;
+}
+
 interface CartStore {
   items: CartItem[];
   discount: Discount | null;
+  pendingCheckouts: Record<string, CheckoutCartItem[]>;
+  rememberCheckout: (orderId: string, items: CheckoutCartItem[]) => void;
+  completeCheckout: (orderId: string, purchased: CheckoutCartItem[]) => void;
   addItem: (item: CartItem) => void;
   removeItem: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
@@ -37,6 +45,29 @@ export const useCart = create<CartStore>()(
     (set, get) => ({
       items: [],
       discount: null,
+      pendingCheckouts: {},
+      rememberCheckout: (orderId, items) => set((state) => ({
+        pendingCheckouts: {
+          ...state.pendingCheckouts,
+          [orderId]: items.map(({ productId, quantity }) => ({ productId, quantity })),
+        },
+      })),
+      completeCheckout: (orderId, purchased) => set((state) => {
+        const snapshot = state.pendingCheckouts[orderId];
+        // A server-authorized order must also belong to a checkout in this
+        // browser. Revisiting an old order must never clear a new cart.
+        if (!snapshot) return state;
+        const pendingCheckouts = { ...state.pendingCheckouts };
+        delete pendingCheckouts[orderId];
+        const items = state.items.flatMap((item) => {
+          const submitted = snapshot.find((entry) => entry.productId === item.productId);
+          const confirmed = purchased.find((entry) => entry.productId === item.productId);
+          const removed = Math.min(submitted?.quantity ?? 0, confirmed?.quantity ?? 0);
+          const quantity = item.quantity - removed;
+          return quantity > 0 ? [{ ...item, quantity }] : [];
+        });
+        return { items, pendingCheckouts, discount: items.length ? state.discount : null };
+      }),
       addItem: (item) => {
         if (item.stock <= 0) return;
         set((state) => {
@@ -92,7 +123,7 @@ export const useCart = create<CartStore>()(
           };
         });
       },
-      clearCart: () => set({ items: [], discount: null }),
+      clearCart: () => set({ items: [], discount: null, pendingCheckouts: {} }),
       applyDiscount: (discount) => set({ discount }),
       removeDiscount: () => set({ discount: null }),
       getDiscountAmount: () => {

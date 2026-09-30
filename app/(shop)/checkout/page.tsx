@@ -46,10 +46,11 @@ export default function CheckoutPage() {
         throw new Error("Failed to create order");
       }
 
-      const { url } = await response.json();
+      const { url, orderId } = await response.json();
 
       // Redirect to Stripe checkout
-      if (url) {
+      if (url && typeof orderId === "string") {
+        useCart.getState().rememberCheckout(orderId, items);
         window.location.href = url;
       } else {
         throw new Error("No checkout URL returned");
