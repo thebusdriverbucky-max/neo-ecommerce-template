@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
@@ -12,7 +13,10 @@ export async function GET(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id, "wishlist");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+      return NextResponse.json(
+        { error: rateLimit.unavailable ? "Wishlist protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const wishlist = await db.wishlist.findMany({
@@ -26,6 +30,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(wishlist);
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("Wishlist GET error:", error);
     return NextResponse.json(
       { error: "Failed to fetch wishlist" },
@@ -43,18 +50,13 @@ export async function POST(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id, "wishlist");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-    }
-
-    const body = await request.json();
-    const { productId } = body;
-
-    if (!productId) {
       return NextResponse.json(
-        { error: "Product ID is required" },
-        { status: 400 }
+        { error: rateLimit.unavailable ? "Wishlist protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
       );
     }
+
+    const { productId } = z.object({ productId: z.string().trim().min(1).max(128) }).parse(await request.json());
 
     const existingItem = await db.wishlist.findUnique({
       where: {
@@ -78,6 +80,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(wishlistItem, { status: 201 });
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("Wishlist POST error:", error);
     return NextResponse.json(
       { error: "Failed to add to wishlist" },
@@ -95,18 +100,13 @@ export async function DELETE(request: NextRequest) {
 
     const rateLimit = await checkRateLimit(session.user.id, "wishlist");
     if (!rateLimit.success) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-    }
-
-    const body = await request.json();
-    const { productId } = body;
-
-    if (!productId) {
       return NextResponse.json(
-        { error: "Product ID is required" },
-        { status: 400 }
+        { error: rateLimit.unavailable ? "Wishlist protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
       );
     }
+
+    const { productId } = z.object({ productId: z.string().trim().min(1).max(128) }).parse(await request.json());
 
     await db.wishlist.deleteMany({
       where: {
@@ -117,6 +117,9 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("Wishlist DELETE error:", error);
     return NextResponse.json(
       { error: "Failed to remove from wishlist" },

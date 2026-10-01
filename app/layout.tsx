@@ -16,6 +16,9 @@ import { StoreSettingsData } from "@/app/actions/settings";
 
 const inter = Inter({ subsets: ["latin"] });
 
+// Store settings and account-specific content must not be frozen at build time.
+export const dynamic = "force-dynamic";
+
 export async function generateMetadata(): Promise<Metadata> {
   const settings = await prisma.storeSettings.findFirst();
   const siteName = settings?.storeName || "My Store";

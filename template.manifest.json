@@ -1,0 +1,519 @@
+{
+  "schemaVersion": "1.0.0",
+  "template": {
+    "id": "neo-ecommerce-lite",
+    "name": "E-commerce Lite",
+    "release": {
+      "version": "0.1.0",
+      "tag": null,
+      "commit": null,
+      "status": "candidate"
+    },
+    "verifiedAt": "2026-10-01"
+  },
+  "runtime": {
+    "node": ">=22.0.0 <23",
+    "packageManager": "npm@10.8.2",
+    "database": "postgresql",
+    "capabilities": [
+      "database",
+      "credentials-auth",
+      "email-verified-owner-setup",
+      "bank-transfer",
+      "signed-guest-orders",
+      "reservation-expiration",
+      "google-oauth-optional",
+      "cloudinary-widget-optional",
+      "distributed-rate-limit-optional"
+    ]
+  },
+  "environment": [
+    {
+      "name": "LICENSE_KEY",
+      "required": true,
+      "feature": "core",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Buyer license key supplied after purchase.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "LICENSE_SERVER_URL",
+      "required": true,
+      "feature": "core",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "License validation service origin supplied with the template.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "url",
+        "protocols": [
+          "https"
+        ]
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "LICENSE_SERVER_SECRET",
+      "required": true,
+      "feature": "core",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Secret supplied for verifying signed license tokens; no built-in fallback.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "string",
+        "minLength": 32
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "LICENSE_PRODUCT",
+      "required": true,
+      "feature": "core",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Exact product identifier supplied with your license. No default; do not guess or use Full.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "DATABASE_URL",
+      "required": true,
+      "feature": "core",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": "postgres-database",
+      "description": "PostgreSQL connection used by runtime and Prisma migrations; use a provider-supported connection for both.",
+      "providerDocsUrl": "https://neon.tech/docs/connect/connect-from-any-app",
+      "validation": {
+        "type": "url",
+        "protocols": [
+          "postgresql",
+          "postgres"
+        ]
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXTAUTH_SECRET",
+      "required": true,
+      "feature": "core",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "NextAuth session signing secret; also the fallback guest-order token secret.",
+      "providerDocsUrl": "https://authjs.dev/getting-started/deployment",
+      "validation": {
+        "type": "string",
+        "minLength": 32
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXTAUTH_URL",
+      "required": true,
+      "feature": "core",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": "application-origin",
+      "description": "Auth framework origin generated from the buyer's canonical application origin.",
+      "providerDocsUrl": "https://authjs.dev/getting-started/deployment",
+      "validation": {
+        "type": "origin",
+        "httpsInProduction": true
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXT_PUBLIC_APP_URL",
+      "required": true,
+      "feature": "core",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": "application-origin",
+      "description": "Canonical application origin used for Checkout and password-reset links.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "origin",
+        "httpsInProduction": true
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXT_PUBLIC_SITE_URL",
+      "required": false,
+      "feature": "legacy-origin-alias",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": "application-origin",
+      "description": "Temporary compatibility alias used by SEO metadata; generate from NEXT_PUBLIC_APP_URL.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "origin",
+        "httpsInProduction": true
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXT_PUBLIC_STORE_URL",
+      "required": false,
+      "feature": "legacy-origin-alias",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": "application-origin",
+      "description": "Temporary compatibility alias used by email links; generate from NEXT_PUBLIC_APP_URL.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "origin",
+        "httpsInProduction": true
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "ADMIN_EMAIL",
+      "required": true,
+      "feature": "core",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Owner inbox for one-time email-verified setup and store notifications; never grants admin just by matching a registration address.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "email"
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "GUEST_ORDER_TOKEN_SECRET",
+      "required": true,
+      "feature": "guest-orders",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Independent random secret of at least 32 characters for signed guest order links; required for guest checkout.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "string",
+        "minLength": 32
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "CRON_SECRET",
+      "required": true,
+      "feature": "bank-reservations",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Bearer secret for the daily unpaid bank-transfer reservation expiry job; not Stripe reconciliation.",
+      "providerDocsUrl": "https://vercel.com/docs/cron-jobs/manage-cron-jobs",
+      "validation": {
+        "type": "string",
+        "minLength": 32
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "GOOGLE_ID",
+      "required": false,
+      "feature": "google-oauth",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": "google-oauth",
+      "description": "Google OAuth client ID; credentials authentication remains available without it.",
+      "providerDocsUrl": "https://developers.google.com/identity/protocols/oauth2",
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "GOOGLE_SECRET",
+      "required": false,
+      "feature": "google-oauth",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": "google-oauth",
+      "description": "Google OAuth client secret paired with GOOGLE_ID.",
+      "providerDocsUrl": "https://developers.google.com/identity/protocols/oauth2",
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "RESEND_API_KEY",
+      "required": true,
+      "feature": "email",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": "resend-email",
+      "description": "Required for browser-only owner setup and password recovery. Runtime orders still work if delivery is disabled.",
+      "providerDocsUrl": "https://resend.com/docs/dashboard/api-keys/introduction",
+      "validation": {
+        "type": "string",
+        "prefixes": [
+          "re_"
+        ]
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "EMAIL_FROM",
+      "required": true,
+      "feature": "email",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": "resend-email",
+      "description": "Resend-verified sender required for owner setup and production delivery.",
+      "providerDocsUrl": "https://resend.com/docs/dashboard/domains/introduction",
+      "validation": {
+        "type": "email-or-mailbox"
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME",
+      "required": false,
+      "feature": "cloudinary-widget",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": "cloudinary-widget",
+      "description": "Public Cloudinary cloud name used by image components and the unsigned upload widget.",
+      "providerDocsUrl": "https://next.cloudinary.dev/installation",
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET",
+      "required": false,
+      "feature": "cloudinary-widget",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": "cloudinary-widget",
+      "description": "Unsigned upload preset restricted for buyer-managed CMS uploads.",
+      "providerDocsUrl": "https://cloudinary.com/documentation/upload_presets",
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "UPSTASH_REDIS_REST_URL",
+      "required": false,
+      "feature": "upstash-rate-limit",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": "upstash-rate-limit",
+      "description": "Optional Upstash REST URL; configure with the token or provide equivalent external WAF protection.",
+      "providerDocsUrl": "https://upstash.com/docs/redis/overall/getstarted",
+      "validation": {
+        "type": "url",
+        "protocols": [
+          "https"
+        ]
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "UPSTASH_REDIS_REST_TOKEN",
+      "required": false,
+      "feature": "upstash-rate-limit",
+      "secret": true,
+      "scope": "server",
+      "valueGroup": "upstash-rate-limit",
+      "description": "Optional Upstash REST token paired with UPSTASH_REDIS_REST_URL.",
+      "providerDocsUrl": "https://upstash.com/docs/redis/overall/getstarted",
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": false
+    },
+    {
+      "name": "NEXT_PUBLIC_STORE_NAME",
+      "required": false,
+      "feature": "presentation-fallbacks",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": null,
+      "description": "Optional store-name fallback when CMS settings are unavailable.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "string",
+        "minLength": 1
+      },
+      "defaultAvailable": true
+    },
+    {
+      "name": "STORE_SUPPORT_EMAIL",
+      "required": false,
+      "feature": "presentation-fallbacks",
+      "secret": false,
+      "scope": "server",
+      "valueGroup": null,
+      "description": "Optional support-address fallback used in order emails.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "email"
+      },
+      "defaultAvailable": true
+    },
+    {
+      "name": "NEXT_PUBLIC_SUPPORT_EMAIL",
+      "required": false,
+      "feature": "presentation-fallbacks",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": null,
+      "description": "Optional support address displayed on the license-required page.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "email"
+      },
+      "defaultAvailable": true
+    },
+    {
+      "name": "NEXT_PUBLIC_CURRENCY_SYMBOL",
+      "required": false,
+      "feature": "presentation-fallbacks",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": null,
+      "description": "Optional email and UI currency-symbol fallback; payment currency remains server controlled.",
+      "providerDocsUrl": null,
+      "validation": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8
+      },
+      "defaultAvailable": true
+    },
+    {
+      "name": "NEXT_PUBLIC_GA_ID",
+      "required": false,
+      "feature": "google-analytics",
+      "secret": false,
+      "scope": "client",
+      "valueGroup": null,
+      "description": "Reserved analytics wrapper identifier; setting this alone does not install Google Analytics.",
+      "providerDocsUrl": "https://support.google.com/analytics/answer/9539598",
+      "validation": {
+        "type": "string",
+        "pattern": "^G-[A-Z0-9]+$"
+      },
+      "defaultAvailable": false
+    }
+  ],
+  "aliases": [
+    {
+      "canonical": "NEXT_PUBLIC_APP_URL",
+      "aliases": [
+        "NEXTAUTH_URL",
+        "NEXT_PUBLIC_SITE_URL",
+        "NEXT_PUBLIC_STORE_URL"
+      ],
+      "policy": "Generate all current runtime aliases from one buyer-supplied origin. NEXTAUTH_URL remains a framework contract; SITE_URL and STORE_URL are deprecated runtime aliases."
+    }
+  ],
+  "build": {
+    "command": "npm run build",
+    "steps": [
+      "prisma generate",
+      "prisma migrate deploy",
+      "npm run db:bootstrap",
+      "next build"
+    ],
+    "bootstrap": {
+      "command": "npm run db:bootstrap",
+      "idempotent": true,
+      "preservesOwnerData": true,
+      "requiresAdminSession": false
+    },
+    "destructiveReset": {
+      "command": "npm run db:reset-demo",
+      "includedInBuild": false,
+      "guard": "ALLOW_DEMO_RESET=true"
+    }
+  },
+  "payments": {
+    "provider": "bank-transfer",
+    "confirmation": "admin-only, after independent bank verification",
+    "reservationDays": 7,
+    "scheduler": {
+      "path": "/api/cron/orders/expire",
+      "method": "GET",
+      "schedule": "0 4 * * *",
+      "authorization": "Bearer CRON_SECRET"
+    },
+    "bankDetails": "CMS settings, saved as immutable order snapshot",
+    "refunds": "manual external bank action; status updates do not transfer funds"
+  },
+  "releaseNotes": "README.md",
+  "featureRequirements": [
+    {
+      "feature": "google-oauth",
+      "allOf": [
+        "GOOGLE_ID",
+        "GOOGLE_SECRET"
+      ]
+    },
+    {
+      "feature": "email",
+      "allOf": [
+        "RESEND_API_KEY",
+        "EMAIL_FROM"
+      ]
+    },
+    {
+      "feature": "cloudinary-widget",
+      "allOf": [
+        "NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME",
+        "NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET"
+      ]
+    },
+    {
+      "feature": "upstash-rate-limit",
+      "allOf": [
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN"
+      ]
+    }
+  ],
+  "verification": {
+    "scope": [
+      "exact-lock install",
+      "unit regressions",
+      "PostgreSQL SQL migration tests",
+      "TypeScript",
+      "ESLint"
+    ],
+    "notVerified": [
+      "real bank payment",
+      "real email delivery",
+      "real Cloudinary upload",
+      "production database upgrade"
+    ],
+    "releasePolicy": "Candidate metadata does not assert a published tag. Marketplace pins the reviewed implementation commit separately."
+  }
+}

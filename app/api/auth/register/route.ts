@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(50),
@@ -14,13 +15,12 @@ const registerSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const ip = request.headers.get("x-forwarded-for") || "127.0.0.1";
-    const { success } = await checkRateLimit(ip, "auth");
+    const rateLimit = await checkRateLimit(getTrustedClientIdentifier(request), "auth");
 
-    if (!success) {
+    if (!rateLimit.success) {
       return NextResponse.json(
-        { message: "Too many requests" },
-        { status: 429 }
+        { message: rateLimit.unavailable ? "Registration protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 }
       );
     }
 
@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
         name,
         email,
         password: hashedPassword,
+        role: "CUSTOMER",
       },
     });
 
@@ -63,15 +64,14 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    console.error("Registration error:", error);
-
-    if (error instanceof z.ZodError) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json(
         { message: "Invalid input" },
         { status: 400 }
       );
     }
 
+    console.error("Registration failed");
     return NextResponse.json(
       { message: "Registration failed" },
       { status: 500 }

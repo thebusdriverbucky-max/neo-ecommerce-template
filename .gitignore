@@ -32,6 +32,5 @@ Thumbs.db
 tsconfig.tsbuildinfo
 
 # Prisma
-prisma/migrations/migration_lock.toml
 .vercel
 .env.production

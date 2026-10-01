@@ -1,7 +1,9 @@
+import { z } from "zod";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { revalidatePath } from "next/cache";
 
 export async function GET(
   req: Request,
@@ -27,6 +29,9 @@ export async function GET(
 
     return NextResponse.json(reviews);
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("[REVIEWS_GET]", error);
     return new NextResponse("Internal Error", { status: 500 });
   }
@@ -45,15 +50,16 @@ export async function POST(
 
     const rateLimit = await checkRateLimit(session.user.id!, "reviews");
     if (!rateLimit.success) {
-      return new NextResponse("Too Many Requests", { status: 429 });
+      return new NextResponse(
+        rateLimit.unavailable ? "Review protection is temporarily unavailable" : "Too Many Requests",
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
-    const body = await req.json();
-    const { rating, comment } = body;
-
-    if (!rating || !comment) {
-      return new NextResponse("Missing required fields", { status: 400 });
-    }
+    const { rating, comment } = z.object({
+      rating: z.number().int().min(1).max(5),
+      comment: z.string().trim().min(1).max(5000),
+    }).parse(await req.json());
 
     const review = await db.review.create({
       data: {
@@ -83,8 +89,14 @@ export async function POST(
       },
     });
 
+    revalidatePath(`/products/${params.id}`);
+    revalidatePath("/products");
+
     return NextResponse.json(review);
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("[REVIEWS_POST]", error);
     return new NextResponse("Internal Error", { status: 500 });
   }
@@ -133,8 +145,14 @@ export async function DELETE(
       },
     });
 
+    revalidatePath(`/products/${params.id}`);
+    revalidatePath("/products");
+
     return new NextResponse(null, { status: 204 });
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("[REVIEWS_DELETE]", error);
     return new NextResponse("Internal Error", { status: 500 });
   }

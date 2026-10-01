@@ -1,2 +1,4 @@
-#!/bin/bash
-ts-node --compiler-options '{"module":"CommonJS"}' prisma/seed.ts
+#!/bin/sh
+set -eu
+
+npm run db:bootstrap

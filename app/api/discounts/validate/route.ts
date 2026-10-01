@@ -1,29 +1,24 @@
+import { z } from "zod";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
-    const identifier = session?.user?.id || request.headers.get("x-forwarded-for") || "127.0.0.1";
+    const identifier = session?.user?.id || getTrustedClientIdentifier(request);
 
     const rateLimit = await checkRateLimit(identifier, "coupons"); // Using same limit as coupons
     if (!rateLimit.success) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429 }
+        { error: rateLimit.unavailable ? "Discount protection is temporarily unavailable. Please try again shortly." : "Too many requests. Please try again later." },
+        { status: rateLimit.unavailable ? 503 : 429 }
       );
     }
 
-    const { code } = await request.json();
-
-    if (!code) {
-      return NextResponse.json(
-        { error: "Code is required" },
-        { status: 400 }
-      );
-    }
+    const { code } = z.object({ code: z.string().trim().min(1).max(50) }).parse(await request.json());
 
     const discount = await db.discountCode.findUnique({
       where: { code: code.toUpperCase() },
@@ -47,16 +42,8 @@ export async function POST(request: NextRequest) {
       const expirationDate = new Date(discount.expiresAt);
       // Устанавливаем время истечения на конец дня (23:59:59.999)
       expirationDate.setHours(23, 59, 59, 999);
-      
+
       const now = new Date();
-      
-      console.log("Discount Validation Debug:", {
-        code: discount.code,
-        expiresAtDB: discount.expiresAt,
-        expiresAtParsed: expirationDate.toISOString(),
-        now: now.toISOString(),
-        isExpired: expirationDate.getTime() < now.getTime()
-      });
 
       // Check if the discount code has expired
       // We compare timestamps to ensure accurate comparison regardless of timezones
@@ -74,6 +61,9 @@ export async function POST(request: NextRequest) {
       value: discount.value,
     });
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("Discount validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate discount" },
@@ -81,4 +71,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

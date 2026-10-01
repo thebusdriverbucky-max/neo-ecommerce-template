@@ -1,6 +1,14 @@
-// prisma/seed.ts
+// Destructive local demo reset. Never run this from build/deploy.
 
 import { db } from "@/lib/db";
+
+if (process.env.NODE_ENV === "production") {
+  throw new Error("Demo reset is disabled in production.");
+}
+
+if (process.env.ALLOW_DEMO_RESET !== "true") {
+  throw new Error("Demo reset requires ALLOW_DEMO_RESET=true.");
+}
 
 const products = [
   {
@@ -291,7 +299,7 @@ async function main() {
       console.log("✓ Store settings already exist");
     }
 
-    // Seed Content Pages
+    // Demo reset is intentionally allowed to restore demo CMS content.
     for (const page of pages) {
       await db.contentPage.upsert({
         where: { slug: page.slug },

@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { Button } from "@/components/ui/Button";
 import { CheckCircle2, Package, Truck, CreditCard, MapPin, AlertCircle } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
+import { verifyGuestOrderToken } from "@/lib/guest-order-token";
 
 interface OrderDetailsPageProps {
   params: {
@@ -12,6 +13,7 @@ interface OrderDetailsPageProps {
   };
   searchParams: {
     success?: string;
+    token?: string;
   };
 }
 
@@ -19,7 +21,7 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
   const session = await auth();
   const isSuccess = searchParams.success === "true";
 
-  let order = await db.order.findUnique({
+  const order = await db.order.findUnique({
     where: { id: params.id },
     include: {
       items: {
@@ -34,11 +36,13 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
   if (!order) {
     notFound();
   }
+  if (!(order as any).reservationExpiresAt || !(order as any).paymentIban) {
+    notFound();
+  }
 
-  // Проверка прав доступа: владелец, админ или гостевой заказ
   const isAdmin = session?.user?.role === "ADMIN";
   const isOwner = session?.user?.id && order.userId === session.user.id;
-  const isGuestOrder = !order.userId && order.guestEmail;
+  const isGuestOrder = !order.userId && verifyGuestOrderToken(searchParams.token, order.id);
 
   if (!isAdmin && !isOwner && !isGuestOrder) {
     redirect("/login");
@@ -123,6 +127,17 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
         </div>
 
         <div className="space-y-6">
+          {order.status === "PENDING" && (order as any).paymentIban && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800 p-4 text-sm space-y-2">
+              <h3 className="font-semibold">Bank transfer instructions</h3>
+              <p><span className="font-medium">IBAN:</span> {(order as any).paymentIban}</p>
+              <p><span className="font-medium">Bank:</span> {(order as any).paymentBankName}</p>
+              <p><span className="font-medium">Account:</span> {(order as any).paymentAccountName}</p>
+              <p className="whitespace-pre-line">{(order as any).paymentDetails}</p>
+              <p className="font-medium">Transfer exactly {formatPrice(Number(order.total), order.currency)} and include {order.orderNumber || order.id}.</p>
+              <p className="text-gray-600 dark:text-gray-400">Reservation expires after 7 days. Late payments require manual support review.</p>
+            </div>
+          )}
           {/* Summary */}
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
             <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-2">

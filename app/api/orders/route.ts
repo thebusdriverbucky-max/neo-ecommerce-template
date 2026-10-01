@@ -1,282 +1,116 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
-import { sendLowStockAlert } from "@/lib/email";
+import { sendLowStockAlert, sendNewOrderNotificationEmail, sendOrderConfirmationEmail } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { createOrderSchema } from "@/lib/validations";
-import { generateOrderNumber } from "@/lib/order-number";
+import { createGuestOrderToken, guestOrderTokensConfigured } from "@/lib/guest-order-token";
+import { createManualOrder, OrderConfigurationError, OrderConflictError, OrderInputError } from "@/lib/manual-order";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 import { z } from "zod";
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
-
-    const userId = session?.user?.id;
-
-    // Verify userId exists in DB if provided
-    let dbUserId = null;
-    if (userId) {
-      const user = await db.user.findUnique({
-        where: { id: userId },
-        select: { id: true }
-      });
-      if (user) {
-        dbUserId = user.id;
-      } else {
-        console.warn(`⚠️ User ID ${userId} from session not found in database. Proceeding as guest or with limited user data.`);
-      }
-    }
-
-    const userIp = request.ip ?? "127.0.0.1";
-    const rateLimitKey = dbUserId || userIp;
-
-    // Rate Limiting
-    const { success } = await checkRateLimit(rateLimitKey, "orders");
-    if (!success) {
+    const sessionUserId = session?.user?.id || null;
+    const user = sessionUserId
+      ? await db.user.findUnique({ where: { id: sessionUserId }, select: { id: true, email: true } })
+      : null;
+    const identifier = user?.id || getTrustedClientIdentifier(request);
+    const rateLimit = await checkRateLimit(identifier, "orders");
+    if (!rateLimit.success) {
       return NextResponse.json(
-        { error: "Too many requests" },
-        { status: 429 }
+        { error: rateLimit.unavailable ? "Checkout protection is temporarily unavailable" : "Too many requests" },
+        { status: rateLimit.unavailable ? 503 : 429 },
       );
     }
 
-    const body = await request.json();
-
-    // Zod Validation
-    let validatedData;
-    try {
-      validatedData = createOrderSchema.parse(body);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return NextResponse.json({ error: "Invalid input", details: error.issues }, { status: 400 });
-      }
-      throw error;
+    const idempotencyKey = request.headers.get("idempotency-key") || "";
+    const body = createOrderSchema.parse(await request.json());
+    if (!user && !guestOrderTokensConfigured()) {
+      throw new OrderConfigurationError("Guest checkout is unavailable until signed order links are configured");
     }
-
-    const { items, shippingAddress, guestEmail } = validatedData;
-    const { billingAddressId, discountCode, shippingAddressId: bodyShippingAddressId } = body;
-
-    if (!dbUserId && !guestEmail) {
-      return NextResponse.json({ error: "Email is required for guest checkout" }, { status: 400 });
-    }
-
-    // Fetch store settings
-    const storeSettings = await db.storeSettings.findFirst();
-    const taxRate = storeSettings?.taxRate ?? 0;
-    const freeShippingThreshold = storeSettings?.freeShippingThreshold ?? 500;
-    const storeCurrency = storeSettings?.currency || "USD";
-
-    // Fetch products to get real prices and check stock
-    const productIds = items.map((item: { productId: string }) => item.productId);
-    const products = await db.product.findMany({
-      where: { id: { in: productIds } },
+    const result = await createManualOrder(db, {
+      actor: { userId: user?.id || null, role: session?.user?.role, guestEmail: body.guestEmail },
+      idempotencyKey,
+      items: body.items.map(({ productId, quantity }) => ({ productId, quantity })),
+      shippingAddress: body.shippingAddress,
+      shippingAddressId: body.shippingAddressId,
+      billingAddressId: body.billingAddressId,
+      discountCode: body.discountCode,
     });
 
-    let subtotal = 0;
-    const orderItemsData: { productId: string; quantity: number; price: number }[] = [];
-
-    for (const item of items) {
-      const product = products.find((p) => p.id === item.productId);
-      if (!product) {
-        return NextResponse.json({ error: `Product not found: ${item.productId}` }, { status: 400 });
-      }
-
-      if (product.stock < item.quantity) {
-        return NextResponse.json({ error: `Insufficient stock for ${product.name}` }, { status: 400 });
-      }
-
-      const price = Number(product.price);
-      subtotal += price * item.quantity;
-
-      orderItemsData.push({
-        productId: product.id,
-        quantity: item.quantity,
-        price: price,
-      });
-    }
-
-    let discountAmount = 0;
-
-    if (discountCode) {
-      const discount = await db.discountCode.findUnique({
-        where: { code: discountCode.toUpperCase() },
-      });
-
-      if (discount && discount.isActive && (!discount.expiresAt || discount.expiresAt > new Date())) {
-        if (discount.type === "FIXED") {
-          discountAmount = Math.min(discount.value, subtotal);
-        } else {
-          discountAmount = (subtotal * discount.value) / 100;
-        }
-      }
-    }
-
-    const total = Math.max(0, subtotal - discountAmount);
-    const tax = total * (taxRate / 100);
-    const shippingCost =
-      total >= freeShippingThreshold ? 0 : storeSettings?.shippingCost ?? 5;
-    const shipping = shippingCost;
-    const finalTotal = total + tax + shipping;
-
-    // Transaction for atomic order creation and stock update
-    const order = await db.$transaction(async (tx) => {
-      let finalShippingAddressId = bodyShippingAddressId || null;
-
-      if (shippingAddress) {
-        const newAddress = await tx.address.create({
-          data: {
-            ...shippingAddress,
-            state: shippingAddress.state || "",
-            userId: dbUserId || undefined,
-          },
-        });
-        finalShippingAddressId = newAddress.id;
-      }
-
-      // Generate order number
-      let orderNumber;
-      try {
-        orderNumber = await generateOrderNumber();
-      } catch (err) {
-        throw new Error("Failed to generate order number");
-      }
-
-      // Create order
-      const orderData = {
-        orderNumber: orderNumber,
-        status: "PENDING",
-        subtotal: subtotal,
-        tax: tax,
-        shippingCost: shipping,
-        total: finalTotal,
-        currency: storeCurrency,
-        shippingAddressId: finalShippingAddressId,
-        billingAddressId,
-        items: {
-          create: orderItemsData.map(item => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.price,
-          })),
-        },
-        ...(dbUserId ? { userId: dbUserId } : { guestEmail: guestEmail }),
+    const guestAccessToken = user ? undefined : createGuestOrderToken(result.orderId);
+    const orderUrl = `/orders/${encodeURIComponent(result.orderId)}${guestAccessToken ? `?token=${encodeURIComponent(guestAccessToken)}` : ""}`;
+    const publicStoreUrl = process.env.NEXT_PUBLIC_STORE_URL?.replace(/\/$/, "");
+    const orderAccessUrl = publicStoreUrl ? `${publicStoreUrl}${orderUrl}` : undefined;
+    const order = await db.order.findUnique({
+      where: { id: result.orderId },
+      include: { items: { include: { product: true } }, user: true },
+    });
+    if (order && !result.replayed) {
+      const paymentOrder = order as typeof order & {
+        paymentIban?: string | null;
+        paymentBankName?: string | null;
+        paymentAccountName?: string | null;
+        paymentDetails?: string | null;
       };
-
-      const newOrder = await tx.order.create({ data: orderData as any });
-
-      // Decrement stock to prevent pending order floods
-      for (const item of orderItemsData) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: {
-              decrement: item.quantity,
-            },
-          },
+      const customerEmail = order.user?.email || order.guestEmail;
+      if (customerEmail) {
+        await sendOrderConfirmationEmail(customerEmail, {
+          orderNumber: order.orderNumber || order.id,
+          orderId: order.id,
+          total: Number(order.total),
+          subtotal: Number(order.subtotal),
+          tax: Number(order.tax),
+          shippingCost: Number(order.shippingCost),
+          currency: order.currency,
+          items: order.items.map((item) => ({ name: item.product.name, qty: item.quantity, price: Number(item.price) })),
+          paymentIban: paymentOrder.paymentIban,
+          paymentBankName: paymentOrder.paymentBankName,
+          paymentAccountName: paymentOrder.paymentAccountName,
+          paymentDetails: paymentOrder.paymentDetails,
+          orderAccessUrl,
         });
       }
-
-      return newOrder;
-    });
-
-    // Check for low stock after transaction (best effort)
-    // Use Promise.allSettled to ensure email failures don't block the process
-    // We don't await this to avoid blocking the response
-    const lowStockAlerts = async () => {
-      try {
-        const alerts = orderItemsData.map(async (item) => {
-          const product = await db.product.findUnique({ where: { id: item.productId } });
-          if (product && product.stock < 5) {
-            return sendLowStockAlert(product.name, product.stock);
-          }
-        });
-        await Promise.allSettled(alerts);
-      } catch (err) {
-        console.error("Email alert background process error:", err);
-      }
-    };
-    await lowStockAlerts();
-
-    return NextResponse.json({
-      orderId: order.id,
-      orderNumber: order.orderNumber
-    });
-  } catch (error: any) {
-    console.error("❌ DETAILED Order creation error:", {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
-      code: error.code,
-      userId: (await auth())?.user?.id,
-    });
-    if (error.clientVersion) {
-      console.error("Prisma Error Details:", {
-        code: error.code,
-        meta: error.meta,
-      });
+      const settings = await db.storeSettings.findFirst();
+      if (settings?.storeEmail) await sendNewOrderNotificationEmail(order as any, settings as any);
+      await Promise.allSettled(order.items.map(async (item) => {
+        const product = await db.product.findUnique({ where: { id: item.productId } });
+        if (product && product.stock < 5) await sendLowStockAlert(product.name, product.stock);
+      }));
     }
-    return NextResponse.json(
-      { error: "Failed to create order", message: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined },
-      { status: 500 }
-    );
+
+    return NextResponse.json({ ...result, guestAccessToken, orderUrl }, { status: result.replayed ? 200 : 201 });
+  } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof OrderInputError) {
+      return NextResponse.json({ error: error instanceof OrderInputError ? error.message : "Invalid input" }, { status: 400 });
+    }
+    if (error instanceof OrderConflictError) return NextResponse.json({ error: error.message }, { status: 409 });
+    if (error instanceof OrderConfigurationError) return NextResponse.json({ error: error.message }, { status: 503 });
+    console.error("Order creation failed");
+    return NextResponse.json({ error: "Failed to create order" }, { status: 500 });
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const session = await auth();
-
-    // Проверка что пользователь - админ
     if (!session?.user?.id || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
-    // Получить все заказы с данными юзера и товарами
     const orders = await db.order.findMany({
+      where: { reservationExpiresAt: { not: null } } as any,
       include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        shippingAddress: {
-          select: {
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            street: true,
-            city: true,
-            state: true,
-            postalCode: true,
-            country: true,
-          },
-        },
-        items: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                image: true,
-              },
-            },
-          },
-        },
+        user: { select: { id: true, name: true, email: true } },
+        shippingAddress: true,
+        items: { include: { product: { select: { id: true, name: true, price: true, image: true } } } },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
     });
-
     return NextResponse.json(orders);
-  } catch (error) {
-    console.error("❌ Error fetching orders:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch orders" },
-      { status: 500 }
-    );
+  } catch {
+    console.error("Order listing failed");
+    return NextResponse.json({ error: "Failed to fetch orders" }, { status: 500 });
   }
 }

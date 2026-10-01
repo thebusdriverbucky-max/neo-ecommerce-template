@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useTransition } from 'react';
+import { useState, useEffect, useTransition, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { getSettings, updateSettings, StoreSettingsData } from '@/app/actions/settings';
 import { getPages, updatePage, togglePageVisibility, ContentPageData, seedCMSPages } from '@/app/actions/cms';
@@ -10,8 +10,8 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from 'sonner';
-import { Edit, Eye, EyeOff, Plus, Upload } from 'lucide-react';
-import { CldUploadWidget } from 'next-cloudinary';
+import { Edit, Eye, EyeOff, Plus } from 'lucide-react';
+import { ProductImageUpload } from "@/components/admin/product-image-upload";
 
 // Hardcoded list of countries for now
 const COUNTRIES = [
@@ -40,7 +40,7 @@ export default function SettingsPage() {
   const { register, handleSubmit, setValue, watch, reset } = useForm<StoreSettingsData>();
   const cmsForm = useForm<ContentPageData>();
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     const res = await getSettings();
     if (res.success && res.data) {
       const data = res.data as unknown as StoreSettingsData;
@@ -70,19 +70,19 @@ export default function SettingsPage() {
       setValue('paymentAccountName', data.paymentAccountName || '');
       setValue('paymentDetails', data.paymentDetails || '');
     }
-  };
+  }, [setValue]);
 
-  const loadPages = async () => {
+  const loadPages = useCallback(async () => {
     const res = await getPages();
     if (res.success && res.data) {
       setPages(res.data);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadSettings();
     loadPages();
-  }, [setValue]);
+  }, [loadSettings, loadPages]);
 
 
   const onSettingsSubmit = (data: StoreSettingsData) => {
@@ -114,7 +114,7 @@ export default function SettingsPage() {
         cmsForm.reset();
         loadPages();
       } else {
-        toast.error('Failed to save page');
+        toast.error(res.error || 'Failed to save page');
       }
     });
   };
@@ -227,26 +227,7 @@ export default function SettingsPage() {
                     placeholder="https://i.imgur.com/..."
                     className="flex-1"
                   />
-                  <CldUploadWidget
-                    uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                    onSuccess={(result: any) => {
-                      if (result.info?.secure_url) {
-                        setValue('faviconUrl', result.info.secure_url);
-                      }
-                    }}
-                  >
-                    {({ open }) => (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => open()}
-                        className="gap-2"
-                      >
-                        <Upload className="w-4 h-4" />
-                        Upload
-                      </Button>
-                    )}
-                  </CldUploadWidget>
+                  <ProductImageUpload onUpload={url => setValue('faviconUrl', url, { shouldDirty: true })} />
                 </div>
                 <p className="text-xs text-gray-400">Recommended: 32x32 or 64x64 PNG/ICO</p>
               </div>
@@ -259,26 +240,7 @@ export default function SettingsPage() {
                     placeholder="https://res.cloudinary.com/..."
                     className="flex-1"
                   />
-                  <CldUploadWidget
-                    uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                    onSuccess={(result: any) => {
-                      if (result.info?.secure_url) {
-                        setValue('ogImageUrl', result.info.secure_url);
-                      }
-                    }}
-                  >
-                    {({ open }) => (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => open()}
-                        className="gap-2"
-                      >
-                        <Upload className="w-4 h-4" />
-                        Upload
-                      </Button>
-                    )}
-                  </CldUploadWidget>
+                  <ProductImageUpload onUpload={url => setValue('ogImageUrl', url, { shouldDirty: true })} />
                 </div>
                 <p className="text-xs text-gray-400">Recommended: 1200x630 PNG/JPG for social sharing</p>
               </div>
@@ -551,14 +513,14 @@ export default function SettingsPage() {
                 startTransition(async () => {
                   const res = await seedCMSPages();
                   if (res.success) {
-                    toast.success('Default pages seeded');
+                    toast.success('Missing pages added; existing content was preserved');
                     loadPages();
                   } else {
                     toast.error('Failed to seed pages');
                   }
                 });
               }} variant="outline" size="sm">
-                Seed Default Pages
+                Add Missing Default Pages
               </Button>
             </div>
           </div>
@@ -631,7 +593,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Slug</label>
-            <Input {...cmsForm.register('slug', { required: true })} placeholder="page-slug" disabled />
+            <Input {...cmsForm.register('slug', { required: true })} placeholder="page-slug" readOnly />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>

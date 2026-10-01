@@ -13,7 +13,8 @@ export const getMyOrders = async () => {
   const orders = await db.order.findMany({
     where: {
       userId: session.user.id,
-    },
+      reservationExpiresAt: { not: null },
+    } as any,
     orderBy: {
       createdAt: "desc",
     },

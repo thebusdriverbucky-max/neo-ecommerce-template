@@ -31,12 +31,13 @@ interface OrderConfirmationData {
   paymentBankName?: string | null;
   paymentAccountName?: string | null;
   paymentDetails?: string | null;
+  orderAccessUrl?: string;
 }
 
 export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): string => {
   const { orderNumber, orderId, total, subtotal, tax, shippingCost,
     items, storeName, supportEmail, storeUrl, currency = 'USD', currencySymbol = '$',
-    paymentIban, paymentBankName, paymentAccountName, paymentDetails } = data;
+    paymentIban, paymentBankName, paymentAccountName, paymentDetails, orderAccessUrl } = data;
 
   const paymentInstructionsHtml = paymentIban ? `
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:20px;margin:20px 0">
@@ -105,7 +106,7 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
     breakdownHtml += `<tr><td colspan="3" style="border-top:1px solid #e5e7eb;"></td></tr>`;
   }
 
-  const trackOrderUrl = storeUrl ? `${storeUrl}/orders/${orderId}` : '#';
+  const trackOrderUrl = orderAccessUrl || (storeUrl ? `${storeUrl}/orders/${orderId}` : '');
 
   return `
     <!DOCTYPE html>
@@ -122,10 +123,9 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
 
         <!-- Body -->
         <div style="padding:32px;">
-          <h2 style="color:#2563eb;font-size:22px;margin:0 0 8px 0;">✅ Order Confirmed!</h2>
+          <h2 style="color:#2563eb;font-size:22px;margin:0 0 8px 0;">Order received — awaiting bank transfer</h2>
           <p style="color:#6b7280;font-size:15px;margin:0 0 24px 0;">
-            Thank you for your order! We're getting it ready to be shipped. 
-            We will notify you when it has been sent.
+            Your items are reserved for 7 days. Transfer the exact amount below; an administrator will confirm the order only after verifying receipt. Late transfers require manual support review.
           </p>
 
           <!-- Order Number Box -->
@@ -158,11 +158,11 @@ export const getOrderConfirmationEmailHtml = (data: OrderConfirmationData): stri
           ${paymentInstructionsHtml}
 
           <!-- Track Order Button -->
-          <div style="text-align:center;margin-top:28px;">
+          ${trackOrderUrl ? `<div style="text-align:center;margin-top:28px;">
             <a href="${trackOrderUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:13px 32px;border-radius:6px;font-size:15px;font-weight:600;">
-              Track Your Order →
+              View Your Order →
             </a>
-          </div>
+          </div>` : ''}
         </div>
 
         <!-- Footer -->
@@ -189,7 +189,8 @@ export const getOrderStatusUpdateEmailHtml = (
   orderId: string,
   status: string,
   storeName: string,
-  trackingNumber?: string | null
+  trackingNumber?: string | null,
+  orderAccessUrl?: string,
 ) => {
   let trackingHtml = "";
   if (trackingNumber) {
@@ -201,20 +202,17 @@ export const getOrderStatusUpdateEmailHtml = (
     `;
   }
 
-  const storeUrl = process.env.NEXT_PUBLIC_STORE_URL || "";
-  const orderUrl = storeUrl ? `${storeUrl}/orders/${orderId}` : '#';
-
   const content = `
     <h2 style="color: #1a1a1a; margin-top: 0;">Order Status Update</h2>
     <p>Your order <strong style="color: #2563eb;">${orderId}</strong> has been updated.</p>
     <p style="font-size: 18px; margin: 24px 0;">New Status: <strong style="color: #1a1a1a; background-color: #f3f4f6; padding: 4px 12px; border-radius: 9999px;">${status}</strong></p>
     ${trackingHtml}
     
-    <div style="text-align:center;margin-top:28px;">
-      <a href="${orderUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:13px 32px;border-radius:6px;font-size:15px;font-weight:600;">
+    ${orderAccessUrl ? `<div style="text-align:center;margin-top:28px;">
+      <a href="${orderAccessUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:13px 32px;border-radius:6px;font-size:15px;font-weight:600;">
         View Order →
       </a>
-    </div>
+    </div>` : ''}
 
     <p style="margin-top: 24px;">Thank you for shopping with us.</p>
   `;

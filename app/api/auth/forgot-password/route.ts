@@ -4,6 +4,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email(),
@@ -11,15 +12,23 @@ const forgotPasswordSchema = z.object({
 
 export async function POST(req: Request) {
   try {
-    const ip = req.headers.get("x-forwarded-for") || "127.0.0.1";
+    const ip = getTrustedClientIdentifier(req);
     const rateLimit = await checkRateLimit(ip, "forgotPassword");
 
     if (!rateLimit.success) {
-      return new NextResponse("Too Many Requests", { status: 429 });
+      return new NextResponse(
+        rateLimit.unavailable ? "Password reset protection is temporarily unavailable" : "Too Many Requests",
+        { status: rateLimit.unavailable ? 503 : 429 },
+      );
     }
 
     const body = await req.json();
     const { email } = forgotPasswordSchema.parse(body);
+
+    // Return the same response without DB writes when email is intentionally off.
+    if (!process.env.RESEND_API_KEY?.trim()) {
+      return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
+    }
 
     const user = await prisma.user.findUnique({
       where: { email },
@@ -30,14 +39,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
     }
 
-    // Генерация токена
+    // Генерация токена. В БД храним только SHA-256 хэш —
+    // утечка базы не даст возможности восстановить токены.
     const resetToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
     const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 час
 
     await prisma.user.update({
       where: { email },
       data: {
-        resetToken,
+        resetToken: hashedToken,
         resetTokenExpiry,
       },
     });
@@ -48,7 +59,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
   } catch (error) {
-    if (error instanceof z.ZodError) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ message: "Invalid email" }, { status: 400 });
     }
     console.error("Forgot password error:", error);

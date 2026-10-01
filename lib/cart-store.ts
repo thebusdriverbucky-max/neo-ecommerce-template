@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { reconcilePurchasedCart, CartSnapshotLine } from "./cart-reconciliation";
 
 export interface CartItem {
   productId: string;
@@ -25,6 +26,7 @@ interface CartStore {
   removeItem: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
+  reconcilePurchase: (purchased: CartSnapshotLine[]) => void;
   applyDiscount: (discount: Discount) => void;
   removeDiscount: () => void;
   getTotalPrice: () => number;
@@ -93,6 +95,10 @@ export const useCart = create<CartStore>()(
         });
       },
       clearCart: () => set({ items: [], discount: null }),
+      reconcilePurchase: (purchased) => set((state) => ({
+        items: reconcilePurchasedCart(state.items, purchased),
+        discount: null,
+      })),
       applyDiscount: (discount) => set({ discount }),
       removeDiscount: () => set({ discount: null }),
       getDiscountAmount: () => {

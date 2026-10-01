@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -10,9 +10,12 @@ import { Input } from "@/components/ui/Input";
 import { Dialog } from "@/components/ui/Dialog";
 import { Textarea } from "@/components/ui/Textarea";
 import { Select } from "@/components/ui/Select";
-import { Plus, Upload } from "lucide-react";
+import { Plus } from "lucide-react";
 import ProductsTable from "@/components/admin/ProductsTable";
-import { CldUploadWidget } from "next-cloudinary";
+import { ProductImageUpload } from "@/components/admin/product-image-upload";
+import { productSchema, productImageSchema } from "@/lib/validations";
+import { productFieldErrors } from "@/lib/product-feedback";
+import { saveProductDraft } from "@/lib/product-upload";
 import { getSettings, type StoreSettingsData } from "@/app/actions/settings";
 import { DEFAULT_CATEGORIES } from "@/lib/constants";
 
@@ -21,7 +24,7 @@ interface Product {
   name: string;
   slug: string;
   description: string;
-  price: number | string | any;
+  price: number | string;
   category: string;
   stock: number;
   image: string;
@@ -32,7 +35,7 @@ interface Product {
 }
 
 export default function AdminProductsPage() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -41,6 +44,13 @@ export default function AdminProductsPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [enabledCategories, setEnabledCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [newImageUrl, setNewImageUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [listError, setListError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const [formData, setFormData] = useState({
     name: "",
     slug: "",
@@ -54,134 +64,114 @@ export default function AdminProductsPage() {
     isArchived: false,
   });
 
-  if (session?.user?.role !== "ADMIN") {
-    redirect("/");
-  }
-
   // Save form data to localStorage whenever it changes
   useEffect(() => {
     if (dialogOpen) {
-      localStorage.setItem(
-        "admin_product_form_draft",
-        JSON.stringify({ data: formData, editingId })
-      );
+      try { saveProductDraft(localStorage, { data: formData, editingId }); } catch { /* storage unavailable */ }
     }
   }, [formData, editingId, dialogOpen]);
 
   useEffect(() => {
-    fetchProducts();
-    fetchSettings();
-  }, []);
+    if (session?.user?.role === "ADMIN") {
+      fetchProducts();
+      fetchSettings();
+    }
+  }, [session?.user?.role]);
 
   const fetchSettings = async () => {
-    const res = await getSettings();
-    const data = res.data as unknown as StoreSettingsData;
-    if (res.success && data?.enabledCategories && data.enabledCategories.length > 0) {
-      setEnabledCategories(data.enabledCategories);
-    }
+    try {
+      const res = await getSettings();
+      const data = res.data as unknown as StoreSettingsData;
+      if (res.success && data?.enabledCategories && data.enabledCategories.length > 0) {
+        setEnabledCategories(data.enabledCategories);
+      }
+    } catch { /* Keep the built-in categories if settings are temporarily unavailable. */ }
   };
 
   const fetchProducts = async () => {
     try {
       const response = await fetch("/api/products?all=true");
       const data = await response.json();
+      if (!response.ok || !Array.isArray(data)) throw new Error("Invalid product list");
       setProducts(data);
-    } catch (error) {
-      console.error("Failed to fetch products:", error);
+      setListError("");
+    } catch {
+      setListError("Could not load products. Refresh the page to retry.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (restore = false) => {
+    if (savingRef.current) return;
+    setFormError("");
+    setFieldErrors({});
+    if (newImageUrl.trim()) {
+      setFormError("Add the pending additional image URL using Add by URL, or clear it before saving.");
+      return;
+    }
+    const parsed = productSchema.safeParse({ ...formData, ...(restore ? { isArchived: false } : {}) });
+    if (!parsed.success) {
+      setFieldErrors(productFieldErrors(parsed.error.issues));
+      setFormError("Please correct the highlighted fields.");
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
     try {
-      const url = editingId ? `/api/products/${editingId}` : "/api/products";
-      const method = editingId ? "PUT" : "POST";
-
-      const response = await fetch(url, {
-        method,
+      const response = await fetch(editingId ? `/api/products/${editingId}` : "/api/products", {
+        method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          price: parseFloat(formData.price),
-          stock: parseInt(formData.stock),
-        }),
+        body: JSON.stringify(parsed.data),
       });
-
-      if (response.ok) {
-        await fetchProducts();
-        setDialogOpen(false);
-        resetForm();
-        localStorage.removeItem("admin_product_form_draft");
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        setFormError(result?.error || `Could not save product (HTTP ${response.status}). Please try again.`);
+        setFieldErrors(result?.fieldErrors || {});
+        return;
       }
-    } catch (error) {
-      console.error("Failed to save product:", error);
+      setNotice(restore ? "Product restored." : editingId ? "Product updated." : "Product created.");
+      setDialogOpen(false);
+      resetForm();
+      await fetchProducts();
+    } catch {
+      setFormError("Could not reach the server. Your form is still here; check your connection and retry.");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteId) return;
-
+  const removeProduct = async (hard: boolean) => {
+    if (!deleteId || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setDeleteError("");
     try {
-      const response = await fetch(`/api/products/${deleteId}?hard=true`, {
+      const response = await fetch(`/api/products/${deleteId}${hard ? "?hard=true" : ""}`, {
         method: "DELETE",
       });
-
-      if (response.ok) {
-        await fetchProducts();
-        setDeleteDialogOpen(false);
-        setDeleteId(null);
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        setDeleteError(result?.error || "Could not delete/archive product. Please retry.");
+        return;
       }
-    } catch (error) {
-      console.error("Failed to delete product:", error);
-    }
-  };
-
-  const handleArchive = async () => {
-    if (!deleteId) return;
-
-    try {
-      const response = await fetch(`/api/products/${deleteId}`, {
-        method: "DELETE",
-      });
-
-      if (response.ok) {
-        await fetchProducts();
-        setDeleteDialogOpen(false);
-        setDeleteId(null);
-      }
-    } catch (error) {
-      console.error("Failed to archive product:", error);
-    }
-  };
-
-  const handleRestore = async () => {
-    if (!editingId) return;
-
-    try {
-      const response = await fetch(`/api/products/${editingId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          isArchived: false,
-          price: parseFloat(formData.price),
-          stock: parseInt(formData.stock),
-        }),
-      });
-
-      if (response.ok) {
-        await fetchProducts();
-        setDialogOpen(false);
-        resetForm();
-        localStorage.removeItem("admin_product_form_draft");
-      }
-    } catch (error) {
-      console.error("Failed to restore product:", error);
+      setNotice(hard ? "Product deleted." : "Product archived.");
+      setDeleteDialogOpen(false);
+      setDeleteId(null);
+      await fetchProducts();
+    } catch {
+      setDeleteError("Could not reach the server. Please retry.");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
   const handleEdit = (product: Product) => {
+    setFieldErrors({});
+    setFormError("");
+    setNewImageUrl("");
     setEditingId(product.id);
     setFormData({
       name: product.name,
@@ -218,53 +208,45 @@ export default function AdminProductsPage() {
     });
     setEditingId(null);
     setNewImageUrl("");
-    localStorage.removeItem("admin_product_form_draft");
+    try { localStorage.removeItem("admin_product_form_draft"); } catch { /* storage unavailable */ }
   };
 
   const handleAddImageUrl = () => {
-    if (newImageUrl && formData.images.length < 4) {
-      setFormData((prev) => {
-        const newImages = [...prev.images, newImageUrl];
-        const newData = { ...prev, images: newImages };
-        localStorage.setItem(
-          "admin_product_form_draft",
-          JSON.stringify({ data: newData, editingId })
-        );
-        return newData;
-      });
-      setNewImageUrl("");
+    const parsed = productImageSchema.safeParse(newImageUrl);
+    if (!parsed.success) {
+      setFieldErrors(previous => ({ ...previous, images: parsed.error.issues[0].message }));
+      return;
     }
+    setFormData(previous => ({ ...previous, images: [...previous.images, parsed.data].slice(0, 4) }));
+    setFieldErrors(previous => ({ ...previous, images: "" }));
+    setNewImageUrl("");
   };
 
   const handleOpenDialog = () => {
-    const saved = localStorage.getItem("admin_product_form_draft");
-    if (saved) {
-      try {
+    setFieldErrors({});
+    setFormError("");
+    setNotice("");
+    setNewImageUrl("");
+    try {
+      const saved = localStorage.getItem("admin_product_form_draft");
+      if (saved) {
         const { data, editingId: savedId } = JSON.parse(saved);
+        if (!data || !Array.isArray(data.images) || !data.images.every((image: unknown) => typeof image === "string") || !["name", "slug", "description", "price", "category", "stock", "image"].every(key => typeof data[key] === "string")) throw new Error("Invalid draft");
         setFormData(data);
-        setEditingId(savedId);
-      } catch (e) {
-        resetForm();
-      }
-    } else {
-      resetForm();
-    }
+        setEditingId(typeof savedId === "string" ? savedId : null);
+      } else resetForm();
+    } catch { resetForm(); }
     setDialogOpen(true);
   };
 
-  if (loading) {
+  if (sessionStatus !== "loading" && session?.user?.role !== "ADMIN") redirect("/");
+
+  if (loading || sessionStatus === "loading") {
     return <div className="text-center py-12">Loading...</div>;
   }
 
-  const categories = enabledCategories.map(cat => ({ value: cat, label: cat }));
-
-  const currencies = [
-    { value: "USD", label: "USD ($)" },
-    { value: "EUR", label: "EUR (€)" },
-    { value: "UAH", label: "UAH (₴)" },
-    { value: "RUB", label: "RUB (₽)" },
-    { value: "GBP", label: "GBP (£)" },
-  ];
+  const categories = Array.from(new Set([...enabledCategories, ...(formData.category ? [formData.category] : [])]))
+    .map(cat => ({ value: cat, label: cat }));
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -282,6 +264,8 @@ export default function AdminProductsPage() {
         ← Scroll left/right to see all actions →
       </p>
 
+      {notice && <p role="status" className="mb-4 text-green-700">{notice}</p>}
+      {listError && <p role="alert" className="mb-4 text-red-600">{listError}</p>}
       <ProductsTable
         products={products}
         onEdit={handleEdit}
@@ -292,35 +276,43 @@ export default function AdminProductsPage() {
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {
-          setDialogOpen(open);
-          // Removed resetForm() to prevent data loss during photo upload
+          if (!savingRef.current) setDialogOpen(open);
         }}
         title={editingId ? "Edit Product" : "Add Product"}
-        onConfirm={handleSubmit}
+        onConfirm={() => handleSubmit()}
+        closeOnConfirm={false}
+        isLoading={saving}
         confirmText={editingId ? "Update" : "Create"}
         extraAction={
           editingId && formData.isArchived ? (
-            <Button variant="outline" onClick={handleRestore}>
+            <Button variant="outline" disabled={saving} onClick={() => handleSubmit(true)}>
               Restore
             </Button>
           ) : undefined
         }
       >
-        <div className="space-y-4 max-h-[60vh] overflow-y-auto px-1">
+        {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
+        <fieldset disabled={saving} className="space-y-4 max-h-[60vh] overflow-y-auto px-1">
           <Input
             label="Product Name"
+            name="name"
+            error={fieldErrors.name}
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             required
           />
           <Input
             label="Slug"
+            name="slug"
+            error={fieldErrors.slug}
             value={formData.slug}
             onChange={(e) => setFormData({ ...formData, slug: e.target.value })}
             required
           />
           <Textarea
             label="Description"
+            name="description"
+            error={fieldErrors.description}
             value={formData.description}
             onChange={(e) =>
               setFormData({ ...formData, description: e.target.value })
@@ -330,6 +322,8 @@ export default function AdminProductsPage() {
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Price"
+              name="price"
+              error={fieldErrors.price}
               type="number"
               step="0.01"
               value={formData.price}
@@ -339,6 +333,8 @@ export default function AdminProductsPage() {
           </div>
           <Select
             label="Category"
+            name="category"
+            error={fieldErrors.category}
             options={categories}
             value={formData.category}
             onChange={(e) =>
@@ -348,6 +344,8 @@ export default function AdminProductsPage() {
           />
           <Input
             label="Stock"
+            name="stock"
+            error={fieldErrors.stock}
             type="number"
             value={formData.stock}
             onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
@@ -360,51 +358,21 @@ export default function AdminProductsPage() {
             <div className="flex gap-2">
               <Input
                 placeholder="Main Image URL"
+                error={fieldErrors.image}
                 type="url"
                 value={formData.image}
                 onChange={(e) => setFormData({ ...formData, image: e.target.value })}
                 required
                 className="flex-1"
               />
-              <CldUploadWidget
-                uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                onSuccess={(result: any) => {
-                  if (result.info?.secure_url) {
-                    setFormData((prev) => {
-                      const newData = { ...prev, image: result.info.secure_url };
-                      localStorage.setItem(
-                        "admin_product_form_draft",
-                        JSON.stringify({ data: newData, editingId })
-                      );
-                      return newData;
-                    });
-                  }
-                }}
-              >
-                {({ open }) => (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      localStorage.setItem(
-                        "admin_product_form_draft",
-                        JSON.stringify({ data: formData, editingId })
-                      );
-                      open();
-                    }}
-                    className="gap-2"
-                  >
-                    <Upload className="w-4 h-4" />
-                    Upload
-                  </Button>
-                )}
-              </CldUploadWidget>
+              <ProductImageUpload disabled={saving} onUpload={url => setFormData(previous => ({ ...previous, image: url }))} />
             </div>
           </div>
 
           {/* Additional Images */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Additional Images (up to 4)</label>
+            {fieldErrors.images && <p role="alert" className="text-sm text-red-600">{fieldErrors.images}</p>}
             <div className="grid grid-cols-1 gap-2">
               {formData.images.map((img, index) => (
                 <div key={index} className="flex gap-2">
@@ -465,40 +433,9 @@ export default function AdminProductsPage() {
                     </div>
                   </div>
 
-                  <CldUploadWidget
-                    uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                    onSuccess={(result: any) => {
-                      if (result.info?.secure_url) {
-                        setFormData((prev) => {
-                          const newImages = [...prev.images, result.info.secure_url];
-                          const newData = { ...prev, images: newImages };
-                          localStorage.setItem(
-                            "admin_product_form_draft",
-                            JSON.stringify({ data: newData, editingId })
-                          );
-                          return newData;
-                        });
-                      }
-                    }}
-                  >
-                    {({ open }) => (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          localStorage.setItem(
-                            "admin_product_form_draft",
-                            JSON.stringify({ data: formData, editingId })
-                          );
-                          open();
-                        }}
-                        className="gap-2 w-full"
-                      >
-                        <Upload className="w-4 h-4" />
-                        Upload Additional Image
-                      </Button>
-                    )}
-                  </CldUploadWidget>
+                  <ProductImageUpload disabled={saving} label="Upload Additional Image" onUpload={url => {
+                    setFormData(previous => ({ ...previous, images: [...previous.images, url].slice(0, 4) }));
+                  }} />
                 </div>
               )}
             </div>
@@ -515,25 +452,29 @@ export default function AdminProductsPage() {
             />
             <span>Featured Product</span>
           </label>
-        </div>
+        </fieldset>
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
+        onOpenChange={open => { if (!savingRef.current) { setDeleteDialogOpen(open); setDeleteError(""); } }}
         title="Delete Product"
         description="Are you sure you want to delete this product? This action cannot be undone. The product will disappear from users' order history and the admin panel. Maybe you want to archive it instead? It won't be displayed in the store but will remain in the history."
-        onConfirm={handleDelete}
+        onConfirm={() => removeProduct(true)}
+        closeOnConfirm={false}
+        isLoading={saving}
         confirmText="Delete"
         cancelText="Cancel"
         isDangerous={true}
         extraAction={
-          <Button variant="outline" onClick={handleArchive}>
+          <Button variant="outline" disabled={saving} onClick={() => removeProduct(false)}>
             Archive
           </Button>
         }
-      />
+      >
+        {deleteError && <p role="alert" className="text-sm text-red-600">{deleteError}</p>}
+      </Dialog>
     </div>
   );
 }

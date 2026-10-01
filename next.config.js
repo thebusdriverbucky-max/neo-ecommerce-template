@@ -30,15 +30,11 @@ const nextConfig = {
   headers: async () => {
     return [
       {
-        source: "/api/:path*",
+        source: "/:path*",
         headers: [
-          { key: "Access-Control-Allow-Credentials", value: "true" },
-          { key: "Access-Control-Allow-Origin", value: "*" },
-          { key: "Access-Control-Allow-Methods", value: "GET,OPTIONS,PATCH,DELETE,POST,PUT" },
-          {
-            key: "Access-Control-Allow-Headers",
-            value: "X-CSRF-Token, X-Forwarded-Host, X-API-Key, X-CSRF-Token, X-Forwarded-Host, X-API-Key, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, X-Response-Time, X-SAME-DOMAIN, X-CSRF-Token",
-          },
+          { key: "Referrer-Policy", value: "same-origin" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
     ];

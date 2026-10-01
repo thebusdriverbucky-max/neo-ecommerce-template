@@ -13,7 +13,8 @@ type OrderWithDetails = Order & {
   shippingAddress: Address | null;
 };
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+let resend: Resend | null = null;
+let resendApiKey: string | undefined;
 const EMAIL_FROM = process.env.EMAIL_FROM || 'onboarding@resend.dev';
 
 type EmailPayload = {
@@ -23,15 +24,15 @@ type EmailPayload = {
 };
 
 export const sendEmail = async (data: EmailPayload) => {
-  if (!process.env.RESEND_API_KEY) {
-    console.log('⚠️ RESEND_API_KEY not set. Logging email to console.');
-    console.log('📧 [MOCK EMAIL] To:', data.to);
-    console.log('Subject:', data.subject);
-    console.log('HTML:', data.html);
-    return { id: 'mock-id' };
-  }
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  // Disabled email is not a successful delivery. Never log tokens or customer data.
+  if (!apiKey) return null;
 
   try {
+    if (!resend || resendApiKey !== apiKey) {
+      resend = new Resend(apiKey);
+      resendApiKey = apiKey;
+    }
     const { data: emailData, error } = await resend.emails.send({
       from: EMAIL_FROM,
       to: data.to,
@@ -40,14 +41,14 @@ export const sendEmail = async (data: EmailPayload) => {
     });
 
     if (error) {
-      console.error('❌ Error sending email:', error);
+      console.error('Email delivery failed');
       return null;
     }
 
     console.log(`📧 Email sent: ${emailData?.id}`);
     return emailData;
   } catch (error) {
-    console.error('❌ Error sending email:', error);
+    console.error('Email delivery failed');
     return null;
   }
 };
@@ -69,6 +70,7 @@ export const sendOrderConfirmationEmail = async (
     paymentBankName?: string | null;
     paymentAccountName?: string | null;
     paymentDetails?: string | null;
+    orderAccessUrl?: string;
   }
 ) => {
   const storeName = orderData.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
@@ -93,11 +95,12 @@ export const sendOrderConfirmationEmail = async (
     paymentBankName: orderData.paymentBankName,
     paymentAccountName: orderData.paymentAccountName,
     paymentDetails: orderData.paymentDetails,
+    orderAccessUrl: orderData.orderAccessUrl,
   });
 
   return sendEmail({
     to: userEmail,
-    subject: `Order Confirmation ${orderData.orderNumber}`,
+    subject: `Order received ${orderData.orderNumber} — bank transfer required`,
     html,
   });
 };
@@ -106,10 +109,11 @@ export const sendOrderStatusUpdateEmail = async (
   userEmail: string,
   orderId: string,
   status: string,
-  trackingNumber?: string | null
+  trackingNumber?: string | null,
+  orderAccessUrl?: string,
 ) => {
   const storeName = process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
-  const html = getOrderStatusUpdateEmailHtml(orderId, status, storeName, trackingNumber);
+  const html = getOrderStatusUpdateEmailHtml(orderId, status, storeName, trackingNumber, orderAccessUrl);
 
   return sendEmail({
     to: userEmail,

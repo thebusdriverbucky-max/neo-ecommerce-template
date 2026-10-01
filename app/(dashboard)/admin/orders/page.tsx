@@ -37,17 +37,29 @@ interface Order {
     price: string | number;
   }>;
   trackingNumber?: string | null;
+  reservationExpiredAt?: string | null;
+  paymentConfirmedAt?: string | null;
 }
 
-const orderStatuses = [
-  { value: "PENDING", label: "Pending" },
-  { value: "CONFIRMED", label: "Confirmed" },
-  { value: "PROCESSING", label: "Processing" },
-  { value: "SHIPPED", label: "Shipped" },
-  { value: "DELIVERED", label: "Delivered" },
-  { value: "CANCELLED", label: "Cancelled" },
-  { value: "REFUNDED", label: "Refunded" },
-];
+const nextStatuses: Record<string, Array<{ value: string; label: string }>> = {
+  PENDING: [
+    { value: "CONFIRMED", label: "Confirm bank payment received" },
+    { value: "CANCELLED", label: "Cancel and release stock" },
+  ],
+  CONFIRMED: [
+    { value: "PROCESSING", label: "Processing" },
+    { value: "CANCELLED", label: "Externally refund, cancel and release stock" },
+    { value: "REFUNDED", label: "External refund complete; release stock" },
+  ],
+  PROCESSING: [
+    { value: "SHIPPED", label: "Shipped" },
+    { value: "CANCELLED", label: "Externally refund, cancel and release stock" },
+    { value: "REFUNDED", label: "External refund complete; release stock" },
+  ],
+  SHIPPED: [{ value: "DELIVERED", label: "Delivered" }, { value: "REFUNDED", label: "Refunded" }],
+  DELIVERED: [{ value: "REFUNDED", label: "Refunded" }],
+  PARTIALLY_REFUNDED: [{ value: "REFUNDED", label: "Fully refunded" }],
+};
 
 export default function AdminOrdersPage() {
   const { data: session } = useSession();
@@ -89,6 +101,11 @@ export default function AdminOrdersPage() {
   const handleStatusUpdate = async () => {
     if (!selectedOrder || !newStatus) return;
 
+    if (["CANCELLED", "REFUNDED"].includes(newStatus) && selectedOrder.status !== "PENDING") {
+      const confirmed = window.confirm("This app does not transfer money. Continue only after any required bank refund is complete and the goods should return to available stock.");
+      if (!confirmed) return;
+    }
+
     try {
       const response = await fetch(`/api/orders/${selectedOrder.id}`, {
         method: "PATCH",
@@ -117,7 +134,10 @@ export default function AdminOrdersPage() {
 
   const openStatusDialog = () => {
     if (selectedOrder) {
-      setNewStatus(selectedOrder.status);
+      const options = selectedOrder.status === "CANCELLED" && selectedOrder.reservationExpiredAt
+        ? [{ value: "PENDING", label: "Recover late payment: reserve stock again" }]
+        : nextStatuses[selectedOrder.status] || [];
+      setNewStatus(options[0]?.value || "");
       setTrackingNumber(selectedOrder.trackingNumber || "");
       setStatusDialogOpen(true);
     }
@@ -313,11 +333,20 @@ export default function AdminOrdersPage() {
         <div className="space-y-4">
           <Select
             label="New Status"
-            options={orderStatuses}
+            options={selectedOrder?.status === "CANCELLED" && selectedOrder.reservationExpiredAt
+              ? [{ value: "PENDING", label: "Recover late payment: reserve stock again" }]
+              : nextStatuses[selectedOrder?.status || ""] || []}
             value={newStatus}
             onChange={(e) => setNewStatus(e.target.value)}
             required
           />
+
+          {selectedOrder?.status === "PENDING" && newStatus === "CONFIRMED" && (
+            <p className="text-sm text-amber-700">Confirm only after independently verifying the exact bank transfer. This action records you as the confirming administrator.</p>
+          )}
+          {selectedOrder?.reservationExpiredAt && newStatus === "PENDING" && (
+            <p className="text-sm text-amber-700">Recovery only re-reserves stock. After it succeeds, verify the late bank payment and confirm in a separate action.</p>
+          )}
 
           <Input
             label="Tracking Number"

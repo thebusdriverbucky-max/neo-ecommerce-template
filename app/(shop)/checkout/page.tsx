@@ -2,94 +2,134 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useCart } from "@/lib/cart-store";
 import { CheckoutForm } from "@/components/shop/checkout-form";
 import { OrderSummary } from "@/components/shop/order-summary";
 import { redirect } from "next/navigation";
-import { getSettings } from "@/app/actions/settings";
+
+const COMPLETION_STORAGE_KEY = "manual-checkout-completion";
+const REQUEST_STORAGE_KEY = "manual-checkout-request";
+
+function readStorage(key: string) {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+function writeStorage(key: string, value?: string) {
+  try { if (value === undefined) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value); } catch { /* Storage can be disabled; checkout must still finish. */ }
+}
 
 export default function CheckoutPage() {
   const { data: session } = useSession();
   const router = useRouter();
-  const { items, getTotalPrice, clearCart, discount } = useCart();
+  const { items, reconcilePurchase, discount } = useCart();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [settings, setSettings] = useState<any>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [orderNumber, setOrderNumber] = useState<string | null>(null);
   const [finalTotal, setFinalTotal] = useState<number>(0);
+  const [paymentSnapshot, setPaymentSnapshot] = useState<any>(null);
+  const [orderUrl, setOrderUrl] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  const initialCartEmpty = useRef(items.length === 0);
+  const inFlight = useRef(false);
+  const requestRef = useRef<{ key: string; fingerprint: string } | null>(null);
 
   useEffect(() => {
-    const fetchSettings = async () => {
-      const result = await getSettings();
-      if (result.success) {
-        setSettings(result.data);
+    if (initialCartEmpty.current) {
+      try {
+        const stored = readStorage(COMPLETION_STORAGE_KEY);
+        if (stored) {
+          const result = JSON.parse(stored);
+          if (result?.orderId && result?.orderUrl && Number.isFinite(result?.total)) {
+            setOrderId(result.orderId);
+            setOrderNumber(result.orderNumber);
+            setFinalTotal(result.total);
+            setPaymentSnapshot(result);
+            setOrderUrl(result.orderUrl);
+          }
+        }
+      } catch {
+        writeStorage(COMPLETION_STORAGE_KEY);
       }
-    };
-    fetchSettings();
-  }, []);
+    } else {
+      writeStorage(COMPLETION_STORAGE_KEY);
+    }
+    setHydrated(true);
+  }, []); // Deliberately restore only the cart snapshot present when this page mounts.
+
+  if (!hydrated) return <div className="container mx-auto px-4 py-8">Loading checkout...</div>;
 
   if (items.length === 0 && !orderId) {
     redirect("/cart");
   }
 
   const handleCheckout = async (formData: any) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     setError(null);
 
     try {
+      const checkoutItems = items.map(({ productId, quantity }) => ({ productId, quantity }));
+      const requestPayload = {
+        items: checkoutItems,
+        shippingAddress: formData.shippingAddress,
+        billingAddressId: formData.billingAddressId,
+        discountCode: discount?.code,
+        guestEmail: !session ? formData.shippingAddress.email : undefined,
+      };
+      const fingerprint = JSON.stringify(requestPayload);
+      let storedRequest: { key: string; fingerprint: string } | null = null;
+      try {
+        storedRequest = requestRef.current || JSON.parse(readStorage(REQUEST_STORAGE_KEY) || "null");
+      } catch {
+        writeStorage(REQUEST_STORAGE_KEY);
+      }
+      const requestId = storedRequest?.fingerprint === fingerprint ? storedRequest.key : crypto.randomUUID();
+      if (storedRequest?.fingerprint !== fingerprint) {
+        requestRef.current = { key: requestId, fingerprint };
+        writeStorage(REQUEST_STORAGE_KEY, JSON.stringify(requestRef.current));
+      }
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items,
-          shippingAddress: formData.shippingAddress,
-          billingAddressId: formData.billingAddressId,
-          total: getTotalPrice(),
-          discountCode: discount?.code,
-          guestEmail: !session ? formData.shippingAddress.email : undefined,
-        }),
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestId },
+        body: JSON.stringify(requestPayload),
       });
 
       if (!response.ok) {
-        throw new Error("Failed to create order");
+        const failure = await response.json().catch(() => null);
+        throw new Error(failure?.error || "Failed to create order");
       }
 
-      const { orderId, orderNumber } = await response.json();
+      const result = await response.json();
+      const { orderId, orderNumber } = result;
 
       if (orderId) {
-        // Calculate final total including tax and shipping for display
-        const subtotal = getTotalPrice();
-        const discountAmount = discount ? (discount.type === "PERCENT" ? (subtotal * discount.value) / 100 : discount.value) : 0;
-        const taxableAmount = Math.max(0, subtotal - discountAmount);
-
-        const taxRate = settings?.taxRate ?? 0;
-        const freeShippingThreshold = settings?.freeShippingThreshold ?? Infinity;
-        const shippingCost = taxableAmount >= freeShippingThreshold ? 0 : settings?.shippingCost ?? 0;
-
-        const tax = taxableAmount * (taxRate / 100);
-        const total = taxableAmount + tax + shippingCost;
-
-        setFinalTotal(total);
+        setFinalTotal(result.total);
         setOrderId(orderId);
         setOrderNumber(orderNumber);
-        clearCart();
+        setPaymentSnapshot(result);
+        setOrderUrl(result.orderUrl);
+        writeStorage(COMPLETION_STORAGE_KEY, JSON.stringify(result));
+        reconcilePurchase(result.purchasedItems || checkoutItems);
+        writeStorage(REQUEST_STORAGE_KEY);
+        requestRef.current = null;
       } else {
         throw new Error("No order ID returned");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Checkout failed");
     } finally {
+      inFlight.current = false;
       setLoading(false);
     }
   };
 
-  if (orderId && settings) {
+  if (orderId && paymentSnapshot) {
     const total = finalTotal;
-    const currency = settings.currency || "USD";
+    const currency = paymentSnapshot.currency || "USD";
 
     return (
       <div className="container mx-auto px-4 py-8">
@@ -111,15 +151,15 @@ export default function CheckoutPage() {
             <div className="space-y-3 bg-white rounded-lg p-4 border">
               <div className="flex justify-between">
                 <span className="text-gray-500">IBAN:</span>
-                <span className="font-mono font-medium">{settings.paymentIban}</span>
+                <span className="font-mono font-medium">{paymentSnapshot.paymentIban}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Bank:</span>
-                <span className="font-medium">{settings.paymentBankName}</span>
+                <span className="font-medium">{paymentSnapshot.paymentBankName}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Account Name:</span>
-                <span className="font-medium">{settings.paymentAccountName}</span>
+                <span className="font-medium">{paymentSnapshot.paymentAccountName}</span>
               </div>
               <div className="flex justify-between border-t pt-3">
                 <span className="text-gray-500">Amount to pay:</span>
@@ -127,14 +167,15 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            {settings.paymentDetails && (
-              <p className="mt-3 text-sm text-gray-600">{settings.paymentDetails}</p>
+            {paymentSnapshot.paymentDetails && (
+              <p className="mt-3 text-sm text-gray-600">{paymentSnapshot.paymentDetails}</p>
             )}
+            <p className="mt-3 text-sm text-gray-600">Stock is reserved for 7 days. A transfer arriving later requires manual support review and cannot be confirmed automatically.</p>
           </div>
 
           <div className="mt-8 text-center">
             <button
-              onClick={() => router.push(`/orders/${orderId}`)}
+              onClick={() => router.push(orderUrl || `/orders/${orderId}`)}
               className="text-blue-600 hover:underline"
             >
               View Order Details

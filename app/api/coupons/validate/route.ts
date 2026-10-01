@@ -1,32 +1,29 @@
+import { z } from "zod";
 // app/api/coupons/validate/route.ts
 
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
-    const identifier = session?.user?.id || request.headers.get("x-forwarded-for") || "127.0.0.1";
+    const identifier = session?.user?.id || getTrustedClientIdentifier(request);
 
     const rateLimit = await checkRateLimit(identifier, "coupons");
     if (!rateLimit.success) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429 }
+        { error: rateLimit.unavailable ? "Coupon protection is temporarily unavailable. Please try again shortly." : "Too many requests. Please try again later." },
+        { status: rateLimit.unavailable ? 503 : 429 }
       );
     }
 
-    const body = await request.json();
-    const { code, orderAmount } = body;
-
-    if (!code || !orderAmount) {
-      return NextResponse.json(
-        { error: "Code and amount required" },
-        { status: 400 }
-      );
-    }
+    const { code, orderAmount } = z.object({
+      code: z.string().trim().min(1).max(50),
+      orderAmount: z.number().finite().nonnegative().max(1000000),
+    }).parse(await request.json());
 
     // Use discountCode model as defined in schema
     const coupon = await db.discountCode.findUnique({
@@ -72,6 +69,9 @@ export async function POST(request: NextRequest) {
       value: coupon.value,
     });
   } catch (error) {
+    if (error instanceof z.ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("Coupon validation error:", error);
     return NextResponse.json(
       { error: "Failed to validate coupon" },
@@ -79,4 +79,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

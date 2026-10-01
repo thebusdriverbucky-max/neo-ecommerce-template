@@ -1,7 +1,5 @@
 'use server';
 
-console.log('DEBUG: settings.ts loaded');
-
 import { db as prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/lib/auth';
@@ -36,20 +34,19 @@ export interface StoreSettingsData {
 
 export async function getSettings() {
   try {
-    let settings = await prisma.storeSettings.findFirst();
-
-    if (!settings) {
-      settings = await prisma.storeSettings.create({
-        data: {
-          currency: 'USD',
-          taxRate: 0,
-          shippingCost: 0,
-          freeShippingThreshold: 500,
-          enabledCountries: [],
-          enabledCategories: [],
-        },
-      });
-    }
+    const settings = await prisma.storeSettings.findFirst() || {
+      id: null,
+      currency: 'USD',
+      taxRate: 0,
+      shippingCost: 0,
+      freeShippingThreshold: 500,
+      enabledCountries: [],
+      enabledCategories: [],
+      paymentIban: null,
+      paymentBankName: null,
+      paymentAccountName: null,
+      paymentDetails: null,
+    };
     return { success: true, data: settings };
   } catch (error) {
     console.error('Error fetching settings:', error);
@@ -64,8 +61,14 @@ export async function updateSettings(data: StoreSettingsData) {
       return { success: false, error: 'Unauthorized' };
     }
 
+    if (!/^[A-Z]{3}$/.test(data.currency) || !Number.isFinite(data.taxRate) || data.taxRate < 0 || data.taxRate > 100) {
+      return { success: false, error: 'Invalid currency or tax rate' };
+    }
+    if (![data.shippingCost, data.freeShippingThreshold].every((value) => Number.isFinite(value) && value >= 0)) {
+      return { success: false, error: 'Invalid shipping settings' };
+    }
+
     const settings = await prisma.storeSettings.findFirst();
-    const currencyChanged = settings?.currency !== data.currency;
 
     await prisma.$transaction(async (tx) => {
       if (settings) {
@@ -97,7 +100,7 @@ export async function updateSettings(data: StoreSettingsData) {
             paymentBankName: data.paymentBankName,
             paymentAccountName: data.paymentAccountName,
             paymentDetails: data.paymentDetails,
-          },
+          } as any,
         });
       } else {
         await tx.storeSettings.create({
@@ -127,16 +130,7 @@ export async function updateSettings(data: StoreSettingsData) {
             paymentBankName: data.paymentBankName,
             paymentAccountName: data.paymentAccountName,
             paymentDetails: data.paymentDetails,
-          },
-        });
-      }
-
-      // Если валюта изменилась, обновляем её у всех товаров
-      if (currencyChanged) {
-        await tx.product.updateMany({
-          data: {
-            currency: data.currency,
-          },
+          } as any,
         });
       }
     });

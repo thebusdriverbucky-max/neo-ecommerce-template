@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { z } from "zod";
 
 export async function GET(request: NextRequest) {
   try {
@@ -16,6 +17,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(discounts);
   } catch (error) {
+    if (error instanceof SyntaxError) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     console.error("Discounts API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch discounts" },
@@ -34,9 +36,27 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
-    let expiresAt = null;
-    if (body.expiresAt) {
-      expiresAt = new Date(body.expiresAt);
+    // Validate admin input
+    const discountSchema = z.object({
+      code: z.string().trim().min(2).max(50),
+      type: z.enum(["FIXED", "PERCENT"]),
+      value: z.number().finite().positive().max(1000000),
+      isActive: z.boolean().optional().default(true),
+      expiresAt: z.string().datetime().optional().nullable(),
+    }).refine(data => data.type !== "PERCENT" || data.value <= 100, { message: "Percentage cannot exceed 100", path: ["value"] });
+
+    const parsed = discountSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: parsed.error.issues },
+        { status: 400 }
+      );
+    }
+    const data = parsed.data;
+
+    let expiresAt: Date | null = null;
+    if (data.expiresAt) {
+      expiresAt = new Date(data.expiresAt);
       // Fix for 2-digit years being interpreted as 19xx or 00xx
       // If the year is less than 100, assume it's 20xx
       if (expiresAt.getFullYear() < 100) {
@@ -46,16 +66,17 @@ export async function POST(request: NextRequest) {
 
     const discount = await db.discountCode.create({
       data: {
-        code: body.code,
-        type: body.type,
-        value: body.value,
+        code: data.code.toUpperCase(),
+        type: data.type,
+        value: data.value,
         expiresAt,
-        isActive: body.isActive,
+        isActive: data.isActive,
       },
     });
 
     return NextResponse.json(discount, { status: 201 });
   } catch (error) {
+    if (error instanceof SyntaxError) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     console.error("Discount creation error:", error);
     return NextResponse.json(
       { error: "Failed to create discount" },

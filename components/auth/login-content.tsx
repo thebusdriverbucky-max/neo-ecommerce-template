@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Github, Mail } from "lucide-react";
+import { SocialLogin } from "./social-login";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -53,10 +53,6 @@ export default function LoginContent() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleOAuthSignIn = (provider: "github" | "google") => {
-    signIn(provider, { callbackUrl });
   };
 
   return (
@@ -114,37 +110,8 @@ export default function LoginContent() {
         </p>
       </div>
 
-      <div className="mt-6 relative">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-gray-300 dark:border-gray-700"></div>
-        </div>
-        <div className="relative flex justify-center text-sm">
-          <span className="px-2 bg-white dark:bg-gray-900 text-gray-500">
-            Or continue with
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-6 space-y-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full gap-2"
-          onClick={() => handleOAuthSignIn("github")}
-        >
-          <Github className="w-4 h-4" />
-          GitHub
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full gap-2"
-          onClick={() => handleOAuthSignIn("google")}
-        >
-          <Mail className="w-4 h-4" />
-          Google
-        </Button>
-      </div>
+      <div className="mt-6"><SocialLogin callbackUrl={callbackUrl} /></div>
+      <p className="mt-6 text-center text-sm"><Link href="/setup" className="text-blue-600 hover:underline">Store owner? Set up your store</Link></p>
     </div>
   );
 }

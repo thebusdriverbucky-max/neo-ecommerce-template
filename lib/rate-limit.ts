@@ -1,83 +1,61 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import { redis } from "./redis";
+import { logger } from "./logger";
 
-export const rateLimits = {
-  // Reviews: 10 requests per hour
-  reviews: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(10, "1 h"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/reviews",
-  }),
-
-  // Forgot Password: 3 requests per hour
-  forgotPassword: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(3, "1 h"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/forgot-password",
-  }),
-
-  // Contact Form: 5 requests per hour
-  contact: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(5, "1 h"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/contact",
-  }),
-
-  // Coupons/Discounts: 15 requests per hour
-  coupons: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(15, "1 h"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/coupons",
-  }),
-
-  // Wishlist: 100 requests per hour
-  wishlist: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(100, "1 h"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/wishlist",
-  }),
-
-  // Admin API: 100 requests per minute
-  admin: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(100, "1 m"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/admin",
-  }),
-
-  // Orders: 50 requests per minute
-  orders: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(50, "1 m"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/orders",
-  }),
-
-  // Auth (Register/Login): 5 requests per minute
-  auth: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(5, "1 m"),
-    analytics: true,
-    prefix: "e-commerce:@upstash/ratelimit/auth",
-  }),
+export type RateLimitResult = {
+  success: boolean;
+  remaining: number;
+  limit: number;
+  reset: number;
+  unavailable?: boolean;
 };
 
-export type RateLimitType = keyof typeof rateLimits;
+const policies = {
+  reviews: [10, 3600000], forgotPassword: [3, 3600000], contact: [5, 3600000],
+  coupons: [15, 3600000], wishlist: [100, 3600000], admin: [100, 60000],
+  orders: [50, 60000], auth: [5, 60000],
+} as const;
+export type RateLimitType = keyof typeof policies;
+export const rateLimits: Partial<Record<RateLimitType, Ratelimit>> = {};
+const buckets = new Map<string, { count: number; reset: number }>();
+const MAX_BUCKETS = 10000;
 
-export async function checkRateLimit(
-  identifier: string,
-  type: RateLimitType
-) {
-  const limiter = rateLimits[type];
+function unavailable(): RateLimitResult {
+  return { success: false, remaining: 0, limit: 0, reset: Date.now() + 60000, unavailable: true };
+}
 
-  if (!limiter) {
-    return { success: true, remaining: 999, limit: 999, reset: 0 };
+export async function checkRateLimit(identifier: string, type: RateLimitType): Promise<RateLimitResult> {
+  const policy = policies[type];
+  if (!policy) return unavailable();
+  const [limit, duration] = policy;
+  const hasUrl = Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim());
+  const hasToken = Boolean(process.env.UPSTASH_REDIS_REST_TOKEN?.trim());
+  if (hasUrl || hasToken) {
+    if (!hasUrl || !hasToken || !redis) return unavailable();
+    try {
+      const limiter = rateLimits[type] ??= new Ratelimit({
+        redis, limiter: Ratelimit.slidingWindow(limit, duration === 60000 ? "1 m" : "1 h"),
+        analytics: false, prefix: `e-commerce:@upstash/ratelimit/${type}`,
+      });
+      return await limiter.limit(identifier);
+    } catch {
+      logger.error("Rate limiter unavailable", { type });
+      return unavailable();
+    }
   }
 
-  return await limiter.limit(identifier);
+  // Optional-provider fallback is per-process, not a distributed abuse guarantee.
+  // Multi-instance deployments should use Upstash or an external edge limiter.
+  const now = Date.now();
+  for (const [key, bucket] of buckets) if (bucket.reset <= now) buckets.delete(key);
+  const key = `${type}:${identifier.slice(0, 256)}`;
+  let bucket = buckets.get(key);
+  if (!bucket) {
+    if (buckets.size >= MAX_BUCKETS) return unavailable();
+    bucket = { count: 0, reset: now + duration };
+    buckets.set(key, bucket);
+  }
+  const success = bucket.count < limit;
+  if (success) bucket.count++;
+  return { success, remaining: Math.max(0, limit - bucket.count), limit, reset: bucket.reset };
 }

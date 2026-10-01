@@ -9,6 +9,7 @@ const { auth } = NextAuth(authConfig);
 const LICENSE_SKIP_PATHS = [
   '/license-required',
   '/api/auth',
+  '/api/cron/orders/expire', // independently protected by the scheduler bearer secret
   '/_next',
   '/favicon.ico',
 ];
@@ -17,22 +18,22 @@ async function licenseMiddleware(request: NextRequest): Promise<NextResponse | n
   const pathname = request.nextUrl.pathname;
 
   // Skip check for system paths
-  if (LICENSE_SKIP_PATHS.some(p => pathname.startsWith(p))) {
+  if (LICENSE_SKIP_PATHS.some(p => (pathname === p || pathname.startsWith(`${p}/`)))) {
     return null;
   }
 
 
   // Check existing JWT cookie
   const cookieToken = request.cookies.get(LICENSE_COOKIE_NAME)?.value;
-  if (cookieToken && cookieToken !== 'grace') {
+  if (cookieToken) {
     const isValid = await verifyLicenseToken(cookieToken);
     if (isValid) return null; // Valid JWT — allow through
   }
 
   // Cookie missing or expired — fetch from license server
-  const { valid, token, grace } = await fetchLicenseValidation();
+  const { valid, token } = await fetchLicenseValidation();
 
-  if (!valid) {
+  if (!valid || !token) {
     // License invalid or revoked — block access
     const url = request.nextUrl.clone();
     url.pathname = '/license-required';
@@ -43,21 +44,12 @@ async function licenseMiddleware(request: NextRequest): Promise<NextResponse | n
   const response = NextResponse.next();
 
   if (token) {
-    // Full JWT from server — valid 24h
+    // The signed token expiry is enforced on every request.
     response.cookies.set(LICENSE_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 60 * 60 * 48, // 48h (grace period if server goes down)
-      path: '/',
-    });
-  } else if (grace) {
-    // Server unreachable — short grace cookie
-    response.cookies.set(LICENSE_COOKIE_NAME, 'grace', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 60 * 60 * 6, // 6h grace
+      maxAge: 60 * 60 * 24,
       path: '/',
     });
   }

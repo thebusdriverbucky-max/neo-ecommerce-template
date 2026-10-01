@@ -20,19 +20,16 @@ export const authConfig = {
       if (user) {
         token.id = user.id;
         token.role = user.role || "CUSTOMER";
-
-        // Securely assign ADMIN role only during initial authentication
-        const adminEmail = process.env.ADMIN_EMAIL;
-        if (adminEmail && user.email === adminEmail) {
-          token.role = "ADMIN";
-        }
+        // Roles are provisioned explicitly in the database, never by email.
+        token.roleVersion = 1;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
-        session.user.role = token.role as string;
+        // Do not accept ADMIN claims minted by the old email-promotion logic.
+        session.user.role = token.roleVersion === 1 ? token.role as string : "CUSTOMER";
       }
       return session;
     },
