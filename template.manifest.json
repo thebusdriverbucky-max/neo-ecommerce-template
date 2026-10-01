@@ -5,9 +5,9 @@
     "name": "E-commerce Lite",
     "release": {
       "version": "0.1.0",
-      "tag": null,
-      "commit": null,
-      "status": "candidate"
+      "tag": "",
+      "commit": "e1f9b8b9995364b84fa9419af173b82066cf61c0",
+      "status": "verified"
     },
     "verifiedAt": "2026-10-01"
   },

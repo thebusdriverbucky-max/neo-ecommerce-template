@@ -14,9 +14,9 @@ assert.equal(manifest.build.steps.join(' && '), pkg.scripts.build);
 assert.equal(manifest.payments.provider, 'bank-transfer');
 assert.equal(manifest.build.bootstrap.preservesOwnerData, true);
 assert.equal(manifest.build.destructiveReset.guard, 'ALLOW_DEMO_RESET=true');
-assert.equal(manifest.template.release.status, 'candidate');
-assert.equal(manifest.template.release.tag, null);
-assert.equal(manifest.template.release.commit, null);
+assert.equal(manifest.template.release.status, 'verified');
+assert.equal(manifest.template.release.tag, '');
+assert.match(manifest.template.release.commit, /^[a-f0-9]{40}$/);
 assert.ok(!pkg.dependencies.stripe);
 assert.ok(!Object.keys(lock.packages).some(name => /(?:^|\/)node_modules\/stripe$/.test(name)));
 
