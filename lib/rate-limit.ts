@@ -10,7 +10,7 @@ export type RateLimitResult = {
   unavailable?: boolean;
 };
 
-export const rateLimits = {
+export const rateLimits = redis ? {
   // Reviews: 10 requests per hour
   reviews: new Ratelimit({
     redis,
@@ -74,9 +74,9 @@ export const rateLimits = {
     analytics: true,
     prefix: "e-commerce:@upstash/ratelimit/auth",
   }),
-};
+} : null;
 
-export type RateLimitType = keyof typeof rateLimits;
+export type RateLimitType = keyof NonNullable<typeof rateLimits>;
 
 function externalRateLimitResult(): RateLimitResult {
   return {
@@ -112,14 +112,8 @@ export async function checkRateLimit(
   identifier: string,
   type: RateLimitType
 ): Promise<RateLimitResult> {
-  const limiter = rateLimits[type];
-
-  if (!limiter) {
-    return externalRateLimitResult();
-  }
-
-  const hasUrl = Boolean(process.env.UPSTASH_REDIS_REST_URL);
-  const hasToken = Boolean(process.env.UPSTASH_REDIS_REST_TOKEN);
+  const hasUrl = Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim());
+  const hasToken = Boolean(process.env.UPSTASH_REDIS_REST_TOKEN?.trim());
 
   if (!hasUrl && !hasToken) {
     // Upstash is optional. Deployments without it must configure an external
@@ -132,6 +126,13 @@ export async function checkRateLimit(
     logger.error("Rate limiter configuration is incomplete", { type });
     return configuredLimiterUnavailableResult(type);
   }
+
+  if (!redis || !rateLimits) {
+    logger.error("Rate limiter could not initialize", { type });
+    return configuredLimiterUnavailableResult(type);
+  }
+
+  const limiter = rateLimits[type];
 
   try {
     return await limiter.limit(identifier);
