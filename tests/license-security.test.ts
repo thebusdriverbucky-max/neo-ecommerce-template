@@ -109,3 +109,26 @@ test("middleware blocks grace/missing proof and retains authentication checks af
   await middleware(request("/api/auth/providers"));
   assert.equal(authCalls, 3);
 });
+
+test("middleware preserves a newly issued license cookie when authentication returns no response", async () => {
+  let validations = 0;
+  const load = moduleLoader({
+    "next-auth": () => ({ auth: async () => undefined }),
+    "@/lib/license": {
+      LICENSE_COOKIE_NAME: "neo_license",
+      verifyLicenseToken: async (token: string) => token === "verified-token",
+      fetchLicenseValidation: async () => {
+        validations++;
+        return { valid: true, token: "verified-token" };
+      },
+    },
+  });
+  const middleware = load("middleware.ts").default;
+  const request = new NextRequest("https://store.example.test/");
+
+  const response = await middleware(request);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.cookies.get("neo_license")?.value, "verified-token");
+  assert.equal(validations, 1);
+});

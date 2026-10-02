@@ -69,27 +69,9 @@ export default async function middleware(request: NextRequest) {
   // 2. Then NextAuth check
   const authResponse = await (auth as any)(request);
 
-  // If NextAuth wants to redirect or return a specific response, use it
-  if (authResponse && authResponse instanceof NextResponse && authResponse.status !== 200) {
-    // If we have license cookies to set, add them to the auth redirect
-    if (licenseResponse) {
-      licenseResponse.cookies.getAll().forEach(cookie => {
-        authResponse.cookies.set(cookie.name, cookie.value, {
-          httpOnly: cookie.httpOnly,
-          secure: cookie.secure,
-          sameSite: cookie.sameSite,
-          maxAge: cookie.maxAge,
-          path: cookie.path,
-        });
-      });
-    }
-    return authResponse;
-  }
-
-  // If both are just "next", we might need to merge cookies
-  if (licenseResponse && authResponse instanceof NextResponse) {
-    licenseResponse.cookies.getAll().forEach(cookie => {
-      authResponse.cookies.set(cookie.name, cookie.value, {
+  const copyLicenseCookies = (response: NextResponse) => {
+    licenseResponse?.cookies.getAll().forEach(cookie => {
+      response.cookies.set(cookie.name, cookie.value, {
         httpOnly: cookie.httpOnly,
         secure: cookie.secure,
         sameSite: cookie.sameSite,
@@ -97,10 +79,23 @@ export default async function middleware(request: NextRequest) {
         path: cookie.path,
       });
     });
-    return authResponse;
+
+    return response;
+  };
+
+  // If NextAuth wants to redirect or return a specific response, use it
+  if (authResponse && authResponse instanceof NextResponse && authResponse.status !== 200) {
+    return copyLicenseCookies(authResponse);
   }
 
-  return authResponse || licenseResponse || NextResponse.next();
+  if (authResponse instanceof NextResponse) {
+    return copyLicenseCookies(authResponse);
+  }
+
+  if (licenseResponse) return licenseResponse;
+  if (authResponse) return authResponse;
+
+  return NextResponse.next();
 }
 
 export const config = {
