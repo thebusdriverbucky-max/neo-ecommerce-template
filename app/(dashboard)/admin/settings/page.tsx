@@ -50,6 +50,7 @@ export default function SettingsPage() {
       setValue('currency', data.currency);
       setValue('taxRate', data.taxRate);
       setValue('shippingCost', data.shippingCost);
+      setValue('freeShippingThreshold', data.freeShippingThreshold);
       setValue('enabledCountries', data.enabledCountries);
       setValue('enabledCategories', data.enabledCategories.length > 0 ? data.enabledCategories : DEFAULT_CATEGORIES);
       setValue('tiktokUrl', data.tiktokUrl || '');
@@ -91,6 +92,7 @@ export default function SettingsPage() {
         ...data,
         taxRate: Number(data.taxRate),
         shippingCost: Number(data.shippingCost),
+        freeShippingThreshold: Number(data.freeShippingThreshold),
       });
       if (res.success) {
         toast.success('Settings updated successfully');
@@ -385,6 +387,17 @@ export default function SettingsPage() {
                 placeholder="0.00"
               />
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Free Shipping Threshold</label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                {...register('freeShippingThreshold', { min: 0 })}
+                placeholder="500.00"
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -487,11 +500,14 @@ export default function SettingsPage() {
                 <Input {...register('paymentAccountName')} />
               </div>
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Additional Details</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment / fallback instructions</label>
                 <Textarea
                   {...register('paymentDetails')}
-                  placeholder="Any extra payment info"
+                  placeholder="Thank you for your order. We will send you the payment instructions shortly."
                 />
+                <p className="mt-1 text-xs text-gray-500">
+                  With an IBAN, this appears below the bank details. Without an IBAN, it becomes the success-page payment message.
+                </p>
               </div>
             </div>
           </div>

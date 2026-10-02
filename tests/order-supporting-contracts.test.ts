@@ -21,6 +21,35 @@ test("settings read returns defaults without mutating database", async () => {
   assert.equal(writes, 0);
 });
 
+test("settings save accepts numeric form values and persists IBAN with the free-shipping threshold", async () => {
+  let written: any = null;
+  const load = moduleLoader({
+    "@/lib/db": { db: {
+      storeSettings: { findFirst: async () => ({ id: "settings-1" }) },
+      $transaction: async (callback: any) => callback({
+        storeSettings: { update: async ({ data }: any) => { written = data; } },
+      }),
+    } },
+    "@/lib/auth": { auth: async () => ({ user: { role: "ADMIN" } }) },
+    "next/cache": { revalidatePath() {} },
+  });
+  const result = await load("app/actions/settings.ts").updateSettings({
+    currency: "eur",
+    taxRate: "5" as any,
+    shippingCost: "10.50" as any,
+    freeShippingThreshold: "100" as any,
+    enabledCountries: [],
+    enabledCategories: [],
+    paymentIban: "DE001",
+    paymentDetails: "Use the order number",
+  });
+  assert.equal(result.success, true);
+  assert.equal(written.currency, "EUR");
+  assert.equal(written.shippingCost, 10.5);
+  assert.equal(written.freeShippingThreshold, 100);
+  assert.equal(written.paymentIban, "DE001");
+});
+
 test("manual-order email is awaiting payment and never invents an unsigned guest link", () => {
   const templates = moduleLoader({ "@prisma/client": {} })("lib/email-templates.ts");
   const base = {
@@ -43,4 +72,3 @@ test("manual-order email is awaiting payment and never invents an unsigned guest
   assert.match(guestHtml, /token=signed-secret-token/);
   assert.doesNotMatch(guestHtml.replace(signedUrl, ""), /\/orders\/private-order-id/);
 });
-

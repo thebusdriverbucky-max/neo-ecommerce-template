@@ -9,7 +9,6 @@ const { auth } = NextAuth(authConfig);
 const LICENSE_SKIP_PATHS = [
   '/license-required',
   '/api/auth',
-  '/api/cron/orders/expire', // independently protected by the scheduler bearer secret
   '/_next',
   '/favicon.ico',
 ];

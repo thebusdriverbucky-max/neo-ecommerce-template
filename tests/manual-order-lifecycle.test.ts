@@ -182,6 +182,24 @@ test("creation aggregates duplicate lines, uses server totals/snapshot and condi
   assert.equal(db.state().orders[0].reservationExpiresAt.toISOString(), "2030-01-08T00:00:00.000Z");
 });
 
+test("checkout without an IBAN still creates a seven-day reservation with a nullable payment snapshot", async () => {
+  const db = fakeDb({
+    settings: {
+      currency: "EUR", taxRate: 0, shippingCost: 0, freeShippingThreshold: 50,
+      paymentIban: null, paymentBankName: null, paymentAccountName: null,
+      paymentDetails: "We will contact you with payment instructions.",
+    },
+  });
+  const result = await manual.createManualOrder(db, {
+    ...baseInput,
+    items: [{ productId: "product000000000000000000001", quantity: 1 }],
+  });
+  assert.equal(result.paymentIban, null);
+  assert.equal(result.paymentDetails, "We will contact you with payment instructions.");
+  assert.equal(result.reservationExpiresAt.toISOString(), "2030-01-08T00:00:00.000Z");
+  assert.equal(db.state().products[0].stock, 4);
+});
+
 test("transaction rollback leaves stock/address/coupon untouched on insufficient aggregated stock", async () => {
   const db = fakeDb({ discounts: [{ id: "d1", code: "SAVE", type: "FIXED", value: 1, isActive: true, used: 0, usageLimit: 1 }] });
   await assert.rejects(() => manual.createManualOrder(db, {

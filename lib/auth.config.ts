@@ -20,7 +20,10 @@ export const authConfig = {
       if (user) {
         token.id = user.id;
         token.role = user.role || "CUSTOMER";
-        // Roles are provisioned explicitly in the database, never by email.
+        const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+        if (adminEmail && user.email?.trim().toLowerCase() === adminEmail) {
+          token.role = "ADMIN";
+        }
         token.roleVersion = 1;
       }
       return token;
@@ -28,7 +31,6 @@ export const authConfig = {
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
-        // Do not accept ADMIN claims minted by the old email-promotion logic.
         session.user.role = token.roleVersion === 1 ? token.role as string : "CUSTOMER";
       }
       return session;

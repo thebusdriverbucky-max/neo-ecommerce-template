@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { PrismaClient } from '@prisma/client';
 import { bootstrapStore } from '../lib/bootstrap';
 import { createManualOrder, transitionManualOrder } from '../lib/manual-order';
-import { moduleLoader } from '../tests/helpers/load-module';
 
 const url = new URL(process.env.DATABASE_URL || '');
 if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !/^\/lite_(ci|verification)$/.test(url.pathname)) {
@@ -38,21 +37,6 @@ async function main() {
   await transitionManualOrder(db, { orderId: first.orderId, nextStatus: 'CANCELLED', adminUserId: 'test-only' });
   assert.equal((await db.product.findUniqueOrThrow({ where: { id: product.id } })).stock, 5);
 
-  // Execute the actual owner setup module, mocking only the email boundary.
-  // This exercises advisory locks, transactions and account/session invalidation.
-  process.env.ADMIN_EMAIL = `owner-${suffix}@example.test`;
-  process.env.NEXTAUTH_URL = 'https://store.example.test';
-  process.env.RESEND_API_KEY = 'fake-not-sent'; process.env.EMAIL_FROM = 'fake@example.test';
-  let token = '';
-  const owner = moduleLoader({ './db': { db }, './email': { sendEmail: async ({ html }: { html: string }) => {
-    token = html.match(/#token=([a-f0-9]{64})/)![1]; return { id: 'mock-delivery' };
-  } } })('lib/owner-setup.ts');
-  await owner.requestOwnerSetup();
-  const results = await Promise.allSettled([1, 2].map(() => owner.completeOwnerSetup(token, 'isolated-test-password-123', 'Test Owner')));
-  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-  const user = await db.user.findUniqueOrThrow({ where: { email: process.env.ADMIN_EMAIL } });
-  assert.equal(user.role, 'ADMIN'); assert.equal(user.sessionVersion, 1);
-  await assert.rejects(owner.requestOwnerSetup, /complete/);
-  console.log('Real disposable PostgreSQL: bootstrap preservation, IBAN checkout/retry/cancel and concurrent owner setup passed.');
+  console.log('Real disposable PostgreSQL: bootstrap preservation and IBAN checkout/retry/cancel passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => db.$disconnect());

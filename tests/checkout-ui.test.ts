@@ -44,3 +44,40 @@ test('checkout survives disabled session storage, prevents double submission and
     }
   }
 });
+
+test('checkout success displays the configured fallback text when IBAN is absent', async () => {
+  const { JSDOM } = createRequire(import.meta.url)('jsdom');
+  const dom = new JSDOM('<div id="root"></div>', { url: 'https://store.example.test/checkout' });
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+  const install = (name: string, value: unknown) => {
+    saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  };
+  for (const [name, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true })) install(name, value);
+  install('sessionStorage', { getItem() { return null; }, setItem() {}, removeItem() {} });
+  install('fetch', async () => Response.json({
+    orderId: 'order-no-iban', orderNumber: 'BANK-2', total: 15, currency: 'EUR',
+    paymentIban: null, paymentFallbackMessage: 'We will email the payment details shortly.',
+    orderUrl: '/orders/order-no-iban?token=private', purchasedItems: [{ productId: 'p', quantity: 1 }],
+  }));
+  const load = moduleLoader({
+    'next-auth/react': { useSession: () => ({ data: null }) },
+    'next/navigation': { useRouter: () => ({ push() {} }), redirect() { throw Error('unexpected redirect'); } },
+    '@/lib/cart-store': { useCart: () => ({ items: [{ productId: 'p', quantity: 1 }], discount: null, reconcilePurchase() {} }) },
+    '@/components/shop/checkout-form': { CheckoutForm: ({ onSubmit }: any) => React.createElement('button', { onClick: () => onSubmit({ shippingAddress: { email: 'guest@example.test' } }) }, 'Submit') },
+    '@/components/shop/order-summary': { OrderSummary: () => null },
+  });
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  try {
+    await act(async () => root.render(React.createElement(load('app/(shop)/checkout/page.tsx').default)));
+    await act(async () => Simulate.click(dom.window.document.querySelector('button')!));
+    assert.match(dom.window.document.body.textContent!, /We will email the payment details shortly/);
+    assert.doesNotMatch(dom.window.document.body.textContent!, /IBAN:/);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [name, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+});

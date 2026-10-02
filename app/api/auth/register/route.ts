@@ -26,10 +26,11 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { name, email, password } = registerSchema.parse(body);
+    const normalizedEmail = email.trim().toLowerCase();
 
     // Check if user exists
     const existingUser = await db.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
 
     if (existingUser) {
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
     const user = await db.user.create({
       data: {
         name,
-        email,
+        email: normalizedEmail,
         password: hashedPassword,
         role: "CUSTOMER",
       },

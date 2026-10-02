@@ -130,6 +130,7 @@ export default function CheckoutPage() {
   if (orderId && paymentSnapshot) {
     const total = finalTotal;
     const currency = paymentSnapshot.currency || "USD";
+    const hasBankDetails = Boolean(paymentSnapshot.paymentIban);
 
     return (
       <div className="container mx-auto px-4 py-8">
@@ -141,37 +142,44 @@ export default function CheckoutPage() {
             </p>
           </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-            <h3 className="font-semibold text-lg mb-4">Payment Instructions</h3>
-            <p className="text-gray-600 mb-4">
-              Please transfer the exact order amount to the following bank account.
-              Your order will be confirmed once payment is received.
-            </p>
+          {hasBankDetails ? (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+              <h3 className="font-semibold text-lg mb-4">Payment Instructions</h3>
+              <p className="text-gray-600 mb-4">
+                Please transfer the exact order amount to the following bank account.
+                Your order will be confirmed once payment is received.
+              </p>
 
-            <div className="space-y-3 bg-white rounded-lg p-4 border">
-              <div className="flex justify-between">
-                <span className="text-gray-500">IBAN:</span>
-                <span className="font-mono font-medium">{paymentSnapshot.paymentIban}</span>
+              <div className="space-y-3 bg-white rounded-lg p-4 border">
+                <div className="flex justify-between gap-4">
+                  <span className="text-gray-500">IBAN:</span>
+                  <span className="font-mono font-medium">{paymentSnapshot.paymentIban}</span>
+                </div>
+                {paymentSnapshot.paymentBankName && <div className="flex justify-between gap-4">
+                  <span className="text-gray-500">Bank:</span>
+                  <span className="font-medium">{paymentSnapshot.paymentBankName}</span>
+                </div>}
+                {paymentSnapshot.paymentAccountName && <div className="flex justify-between gap-4">
+                  <span className="text-gray-500">Account Name:</span>
+                  <span className="font-medium">{paymentSnapshot.paymentAccountName}</span>
+                </div>}
+                <div className="flex justify-between gap-4 border-t pt-3">
+                  <span className="text-gray-500">Amount to pay:</span>
+                  <span className="font-bold text-lg">{total.toFixed(2)} {currency}</span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Bank:</span>
-                <span className="font-medium">{paymentSnapshot.paymentBankName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Account Name:</span>
-                <span className="font-medium">{paymentSnapshot.paymentAccountName}</span>
-              </div>
-              <div className="flex justify-between border-t pt-3">
-                <span className="text-gray-500">Amount to pay:</span>
-                <span className="font-bold text-lg">{total.toFixed(2)} {currency}</span>
-              </div>
+
+              {paymentSnapshot.paymentDetails && (
+                <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{paymentSnapshot.paymentDetails}</p>
+              )}
+              <p className="mt-3 text-sm text-gray-600">Stock is reserved for 7 days. A transfer arriving later requires manual support review and cannot be confirmed automatically.</p>
             </div>
-
-            {paymentSnapshot.paymentDetails && (
-              <p className="mt-3 text-sm text-gray-600">{paymentSnapshot.paymentDetails}</p>
-            )}
-            <p className="mt-3 text-sm text-gray-600">Stock is reserved for 7 days. A transfer arriving later requires manual support review and cannot be confirmed automatically.</p>
-          </div>
+          ) : (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-amber-950">
+              <h3 className="mb-2 text-lg font-semibold">Payment Instructions</h3>
+              <p className="whitespace-pre-line text-sm">{paymentSnapshot.paymentFallbackMessage}</p>
+            </div>
+          )}
 
           <div className="mt-8 text-center">
             <button

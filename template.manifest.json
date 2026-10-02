@@ -18,7 +18,7 @@
     "capabilities": [
       "database",
       "credentials-auth",
-      "email-verified-owner-setup",
+      "admin-email-role",
       "bank-transfer",
       "signed-guest-orders",
       "reservation-expiration",
@@ -190,7 +190,7 @@
       "secret": false,
       "scope": "server",
       "valueGroup": null,
-      "description": "Owner inbox for one-time email-verified setup and store notifications; never grants admin just by matching a registration address.",
+      "description": "Administrator identity and store-notification recipient. Register or sign in with this address to receive admin access.",
       "providerDocsUrl": null,
       "validation": {
         "type": "email"
@@ -206,21 +206,6 @@
       "valueGroup": null,
       "description": "Independent random secret of at least 32 characters for signed guest order links; required for guest checkout.",
       "providerDocsUrl": null,
-      "validation": {
-        "type": "string",
-        "minLength": 32
-      },
-      "defaultAvailable": false
-    },
-    {
-      "name": "CRON_SECRET",
-      "required": true,
-      "feature": "bank-reservations",
-      "secret": true,
-      "scope": "server",
-      "valueGroup": null,
-      "description": "Bearer secret for the daily unpaid bank-transfer reservation expiry job; not Stripe reconciliation.",
-      "providerDocsUrl": "https://vercel.com/docs/cron-jobs/manage-cron-jobs",
       "validation": {
         "type": "string",
         "minLength": 32
@@ -259,12 +244,12 @@
     },
     {
       "name": "RESEND_API_KEY",
-      "required": true,
+      "required": false,
       "feature": "email",
       "secret": true,
       "scope": "server",
       "valueGroup": "resend-email",
-      "description": "Required for browser-only owner setup and password recovery. Runtime orders still work if delivery is disabled.",
+      "description": "Resend API key for password recovery and store notifications.",
       "providerDocsUrl": "https://resend.com/docs/dashboard/api-keys/introduction",
       "validation": {
         "type": "string",
@@ -276,12 +261,12 @@
     },
     {
       "name": "EMAIL_FROM",
-      "required": true,
+      "required": false,
       "feature": "email",
       "secret": false,
       "scope": "server",
       "valueGroup": "resend-email",
-      "description": "Resend-verified sender required for owner setup and production delivery.",
+      "description": "Verified sender used when Resend delivery is enabled.",
       "providerDocsUrl": "https://resend.com/docs/dashboard/domains/introduction",
       "validation": {
         "type": "email-or-mailbox"
@@ -460,13 +445,8 @@
     "provider": "bank-transfer",
     "confirmation": "admin-only, after independent bank verification",
     "reservationDays": 7,
-    "scheduler": {
-      "path": "/api/cron/orders/expire",
-      "method": "GET",
-      "schedule": "0 4 * * *",
-      "authorization": "Bearer CRON_SECRET"
-    },
-    "bankDetails": "CMS settings, saved as immutable order snapshot",
+    "expiration": "opportunistic during storefront reads and checkout; no scheduler environment variable required",
+    "bankDetails": "Admin Settings, saved as an immutable order snapshot; payment instructions are used as the no-IBAN fallback message",
     "refunds": "manual external bank action; status updates do not transfer funds"
   },
   "releaseNotes": "README.md",

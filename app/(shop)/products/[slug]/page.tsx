@@ -11,6 +11,7 @@ import { ProductReviews } from "@/components/shop/product-reviews";
 import { WishlistButton } from "@/components/ui/WishlistButton";
 import { ProductDescription } from "@/components/shop/ProductDescription";
 import { ProductGallery } from "@/components/shop/ProductGallery";
+import { releaseExpiredReservationsForStorefront } from "@/lib/reservation-cleanup";
 
 export const revalidate = 3600;
 
@@ -48,6 +49,7 @@ export async function generateMetadata({ params }: ProductPageProps) {
 }
 
 export default async function ProductPage({ params }: ProductPageProps) {
+  await releaseExpiredReservationsForStorefront();
   const product = await db.product.findUnique({
     where: { slug: params.slug },
   });
@@ -127,4 +129,3 @@ export default async function ProductPage({ params }: ProductPageProps) {
     </div>
   );
 }
-

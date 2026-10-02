@@ -6,9 +6,11 @@ import { revalidatePath } from "next/cache";
 import { productFieldErrors, productWriteError } from "@/lib/product-feedback";
 import { auth } from "@/lib/auth";
 import { productSchema } from "@/lib/validations";
+import { releaseExpiredReservationsForStorefront } from "@/lib/reservation-cleanup";
 
 export async function GET(request: NextRequest) {
   try {
+    await releaseExpiredReservationsForStorefront();
     const searchParams = request.nextUrl.searchParams;
     const category = searchParams.get("category");
     const minPrice = parseFloat(searchParams.get("minPrice") || "0");

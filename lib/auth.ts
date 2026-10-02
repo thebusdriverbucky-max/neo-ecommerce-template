@@ -24,7 +24,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     ...authConfig.callbacks,
     async signIn({ account, profile }) {
-      // No automatic account linking or administrative promotion, even for Google.
       if (account?.provider === "google") {
         return profile?.email_verified === true && typeof profile.email === "string" && !!profile.email.trim();
       }
@@ -34,14 +33,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) token.id = user.id;
       token.role = "CUSTOMER";
       token.roleVersion = 1;
-      // Re-read roles on the server so manual revocation takes effect for API/actions.
       if (typeof token.id === "string") {
         try {
-          const current = await db.user.findUnique({ where: { id: token.id }, select: { role: true, sessionVersion: true } });
+          const current = await db.user.findUnique({ where: { id: token.id }, select: { email: true, role: true, sessionVersion: true } });
           if (!current) return null;
           if (user) token.sessionVersion = (user as any).sessionVersion ?? current?.sessionVersion ?? 0;
           if (current && (token.sessionVersion ?? 0) !== (current.sessionVersion ?? 0)) return null;
-          if (current?.role === "ADMIN") token.role = "ADMIN";
+          const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+          if (current.role === "ADMIN" || (adminEmail && current.email.trim().toLowerCase() === adminEmail)) token.role = "ADMIN";
         } catch { /* Fail closed if role lookup is unavailable. */ }
       }
       return token;
@@ -69,7 +68,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!validatedCreds.success) return null;
 
         const user = await db.user.findUnique({
-          where: { email: validatedCreds.data.email },
+          where: { email: validatedCreds.data.email.trim().toLowerCase() },
         });
 
         if (!user || !user.password) return null;

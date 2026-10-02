@@ -75,23 +75,20 @@ test("guest checkout fails closed before order creation when signed links are un
   assert.equal(created, 0);
 });
 
-test("expiration cron requires an exact Bearer secret", async () => {
+test("reservation cleanup needs no cron secret and storefront failures remain non-blocking", async () => {
   let calls = 0;
-  process.env.CRON_SECRET = "isolated-cron-secret";
-  try {
-    const load = moduleLoader({
-      "@/lib/db": { db: {} },
-      "@/lib/manual-order": { expirePendingOrders: async () => ++calls },
-    });
-    const { POST, GET } = load("app/api/cron/orders/expire/route.ts");
-    assert.equal((await POST(new Request("https://store.example.test/api/cron/orders/expire", { method: "POST" }))).status, 401);
-    assert.equal((await POST(new Request("https://store.example.test/api/cron/orders/expire", { method: "POST", headers: { authorization: "Bearer wrong" } }))).status, 401);
-    const response = await POST(new Request("https://store.example.test/api/cron/orders/expire", { method: "POST", headers: { authorization: "Bearer isolated-cron-secret" } }));
-    assert.equal(response.status, 200);
-    assert.equal(calls, 1);
-    assert.equal((await GET(new Request("https://store.example.test/api/cron/orders/expire", { headers: { authorization: "Bearer isolated-cron-secret" } }))).status, 200);
-    assert.equal(calls, 2);
-  } finally {
-    delete process.env.CRON_SECRET;
-  }
+  let fails = false;
+  const load = moduleLoader({
+    "@/lib/db": { db: {} },
+    "@/lib/manual-order": { expirePendingOrders: async () => {
+      calls += 1;
+      if (fails) throw new Error("temporary cleanup race");
+      return 2;
+    } },
+  });
+  const cleanup = load("lib/reservation-cleanup.ts");
+  assert.equal(await cleanup.releaseExpiredReservations(), 2);
+  fails = true;
+  await cleanup.releaseExpiredReservationsForStorefront();
+  assert.equal(calls, 2);
 });

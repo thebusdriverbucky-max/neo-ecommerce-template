@@ -3,6 +3,7 @@
 import { db as prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/lib/auth';
+import { DEFAULT_PAYMENT_FALLBACK_MESSAGE } from '@/lib/payment-instructions';
 
 export interface StoreSettingsData {
   storeName?: string;
@@ -47,7 +48,13 @@ export async function getSettings() {
       paymentAccountName: null,
       paymentDetails: null,
     };
-    return { success: true, data: settings };
+    return {
+      success: true,
+      data: {
+        ...settings,
+        paymentDetails: settings.paymentDetails?.trim() || DEFAULT_PAYMENT_FALLBACK_MESSAGE,
+      },
+    };
   } catch (error) {
     console.error('Error fetching settings:', error);
     return { success: false, error: 'Failed to fetch settings' };
@@ -61,11 +68,19 @@ export async function updateSettings(data: StoreSettingsData) {
       return { success: false, error: 'Unauthorized' };
     }
 
-    if (!/^[A-Z]{3}$/.test(data.currency) || !Number.isFinite(data.taxRate) || data.taxRate < 0 || data.taxRate > 100) {
+    const currency = data.currency?.trim().toUpperCase();
+    const taxRate = Number(data.taxRate);
+    const shippingCost = Number(data.shippingCost);
+    const freeShippingThreshold = Number(data.freeShippingThreshold);
+
+    if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
       return { success: false, error: 'Invalid currency or tax rate' };
     }
-    if (![data.shippingCost, data.freeShippingThreshold].every((value) => Number.isFinite(value) && value >= 0)) {
-      return { success: false, error: 'Invalid shipping settings' };
+    if (!Number.isFinite(shippingCost) || shippingCost < 0) {
+      return { success: false, error: 'Shipping cost must be zero or greater' };
+    }
+    if (!Number.isFinite(freeShippingThreshold) || freeShippingThreshold < 0) {
+      return { success: false, error: 'Free shipping threshold must be zero or greater' };
     }
 
     const settings = await prisma.storeSettings.findFirst();
@@ -77,10 +92,10 @@ export async function updateSettings(data: StoreSettingsData) {
           data: {
             storeName: data.storeName,
             storeEmail: data.storeEmail,
-            currency: data.currency,
-            taxRate: data.taxRate,
-            shippingCost: data.shippingCost,
-            freeShippingThreshold: data.freeShippingThreshold,
+            currency,
+            taxRate,
+            shippingCost,
+            freeShippingThreshold,
             enabledCountries: data.enabledCountries,
             enabledCategories: data.enabledCategories,
             tiktokUrl: data.tiktokUrl,
@@ -107,10 +122,10 @@ export async function updateSettings(data: StoreSettingsData) {
           data: {
             storeName: data.storeName,
             storeEmail: data.storeEmail,
-            currency: data.currency,
-            taxRate: data.taxRate,
-            shippingCost: data.shippingCost,
-            freeShippingThreshold: data.freeShippingThreshold,
+            currency,
+            taxRate,
+            shippingCost,
+            freeShippingThreshold,
             enabledCountries: data.enabledCountries,
             enabledCategories: data.enabledCategories,
             tiktokUrl: data.tiktokUrl,

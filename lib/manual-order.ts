@@ -19,17 +19,13 @@ function normalizedEmail(value?: string | null): string | null {
   return value?.trim().toLowerCase() || null;
 }
 
-function requiredPaymentSettings(settings: any) {
-  const snapshot = {
-    paymentIban: settings?.paymentIban?.trim(),
-    paymentBankName: settings?.paymentBankName?.trim(),
-    paymentAccountName: settings?.paymentAccountName?.trim(),
-    paymentDetails: settings?.paymentDetails?.trim(),
+function paymentSettingsSnapshot(settings: any) {
+  return {
+    paymentIban: settings?.paymentIban?.trim() || null,
+    paymentBankName: settings?.paymentBankName?.trim() || null,
+    paymentAccountName: settings?.paymentAccountName?.trim() || null,
+    paymentDetails: settings?.paymentDetails?.trim() || null,
   };
-  if (Object.values(snapshot).some((value) => !value)) {
-    throw new OrderConfigurationError("Bank transfer checkout is unavailable until all payment details are configured");
-  }
-  return snapshot as Record<keyof typeof snapshot, string>;
 }
 
 export function aggregateOrderItems(items: OrderItemInput[]): OrderItemInput[] {
@@ -114,7 +110,8 @@ export async function createManualOrder(db: any, input: {
     }
 
     const settings = await tx.storeSettings.findFirst();
-    const payment = requiredPaymentSettings(settings);
+    if (!settings) throw new OrderConfigurationError("Store settings are not configured");
+    const payment = paymentSettingsSnapshot(settings);
 
     if ((input.shippingAddressId || input.billingAddressId) && !input.actor.userId) {
       throw new OrderInputError("Guests must provide a new address");

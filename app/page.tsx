@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { ProductGrid } from "@/components/shop/product-grid";
 import { CTA } from "@/components/home/cta";
+import { releaseExpiredReservationsForStorefront } from "@/lib/reservation-cleanup";
 
 export const metadata = {
   title: "Home | E-Commerce Store",
@@ -10,6 +11,7 @@ export const metadata = {
 };
 
 export default async function HomePage() {
+  await releaseExpiredReservationsForStorefront();
   const settings = await db.storeSettings.findFirst();
   const heroTitle = settings?.heroTitle || 'Welcome to Our Store';
   const heroSubtitle = settings?.heroSubtitle || 'Discover quality products at amazing prices. \nYour journey to better shopping starts here.';

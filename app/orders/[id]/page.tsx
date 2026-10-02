@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { CheckCircle2, Package, Truck, CreditCard, MapPin, AlertCircle } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
 import { verifyGuestOrderToken } from "@/lib/guest-order-token";
+import { paymentFallbackMessage } from "@/lib/payment-instructions";
 
 interface OrderDetailsPageProps {
   params: {
@@ -36,7 +37,7 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
   if (!order) {
     notFound();
   }
-  if (!(order as any).reservationExpiresAt || !(order as any).paymentIban) {
+  if (!(order as any).reservationExpiresAt) {
     notFound();
   }
 
@@ -136,6 +137,12 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
               <p className="whitespace-pre-line">{(order as any).paymentDetails}</p>
               <p className="font-medium">Transfer exactly {formatPrice(Number(order.total), order.currency)} and include {order.orderNumber || order.id}.</p>
               <p className="text-gray-600 dark:text-gray-400">Reservation expires after 7 days. Late payments require manual support review.</p>
+            </div>
+          )}
+          {order.status === "PENDING" && !(order as any).paymentIban && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              <h3 className="mb-2 font-semibold">Payment instructions</h3>
+              <p className="whitespace-pre-line">{paymentFallbackMessage((order as any).paymentDetails)}</p>
             </div>
           )}
           {/* Summary */}

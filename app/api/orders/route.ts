@@ -7,6 +7,8 @@ import { createOrderSchema } from "@/lib/validations";
 import { createGuestOrderToken, guestOrderTokensConfigured } from "@/lib/guest-order-token";
 import { createManualOrder, OrderConfigurationError, OrderConflictError, OrderInputError } from "@/lib/manual-order";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
+import { paymentFallbackMessage } from "@/lib/payment-instructions";
+import { releaseExpiredReservations } from "@/lib/reservation-cleanup";
 import { z } from "zod";
 
 export async function POST(request: NextRequest) {
@@ -30,6 +32,7 @@ export async function POST(request: NextRequest) {
     if (!user && !guestOrderTokensConfigured()) {
       throw new OrderConfigurationError("Guest checkout is unavailable until signed order links are configured");
     }
+    await releaseExpiredReservations();
     const result = await createManualOrder(db, {
       actor: { userId: user?.id || null, role: session?.user?.role, guestEmail: body.guestEmail },
       idempotencyKey,
@@ -81,7 +84,14 @@ export async function POST(request: NextRequest) {
       }));
     }
 
-    return NextResponse.json({ ...result, guestAccessToken, orderUrl }, { status: result.replayed ? 200 : 201 });
+    return NextResponse.json({
+      ...result,
+      paymentFallbackMessage: !result.paymentIban
+        ? paymentFallbackMessage(result.paymentDetails)
+        : null,
+      guestAccessToken,
+      orderUrl,
+    }, { status: result.replayed ? 200 : 201 });
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof OrderInputError) {
       return NextResponse.json({ error: error instanceof OrderInputError ? error.message : "Invalid input" }, { status: 400 });

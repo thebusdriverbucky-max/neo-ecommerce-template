@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const session = await auth();
   const order = await db.order.findUnique({ where: { id: params.id }, include: detailInclude });
   if (!order) return NextResponse.json({ error: "Order not found" }, { status: 404 });
-  if (!(order as any).reservationExpiresAt || !(order as any).paymentIban) {
+  if (!(order as any).reservationExpiresAt) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
   }
   const allowed = session?.user?.role === "ADMIN" ||

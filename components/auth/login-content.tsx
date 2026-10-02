@@ -111,7 +111,7 @@ export default function LoginContent() {
       </div>
 
       <div className="mt-6"><SocialLogin callbackUrl={callbackUrl} /></div>
-      <p className="mt-6 text-center text-sm"><Link href="/setup" className="text-blue-600 hover:underline">Store owner? Set up your store</Link></p>
+      <p className="mt-6 text-center text-sm">Store owner? Register or sign in with the configured administrator email.</p>
     </div>
   );
 }

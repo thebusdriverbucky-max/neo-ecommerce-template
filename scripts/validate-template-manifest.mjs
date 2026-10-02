@@ -24,8 +24,11 @@ const names = new Set(manifest.environment.map(entry => entry.name));
 assert.equal(names.size, manifest.environment.length);
 assert.ok(![...names].some(name => name.startsWith('STRIPE_')));
 assert.ok(!names.has('DATABASE_URL_UNPOOLED'));
-for (const name of ['ADMIN_EMAIL', 'RESEND_API_KEY', 'EMAIL_FROM', 'GUEST_ORDER_TOKEN_SECRET', 'CRON_SECRET']) {
+for (const name of ['ADMIN_EMAIL', 'GUEST_ORDER_TOKEN_SECRET']) {
   assert.equal(manifest.environment.find(entry => entry.name === name)?.required, true, name);
+}
+for (const name of ['RESEND_API_KEY', 'EMAIL_FROM']) {
+  assert.equal(manifest.environment.find(entry => entry.name === name)?.required, false, name);
 }
 assert.equal(manifest.environment.find(entry => entry.name === 'LICENSE_PRODUCT').defaultAvailable, false);
 
@@ -43,5 +46,6 @@ function scan(directory) {
 for (const directory of ['app', 'components', 'lib', 'scripts', 'prisma']) scan(directory);
 const schema = readFileSync('prisma/schema.prisma', 'utf8');
 for (const match of schema.matchAll(/env\("([A-Z0-9_]+)"\)/g)) assert.ok(names.has(match[1]));
-assert.equal(JSON.parse(readFileSync('vercel.json', 'utf8')).crons[0].path, manifest.payments.scheduler.path);
-console.log('Lite manifest, lockfile, build, scheduler and source contract are consistent.');
+assert.ok(!names.has('CRON_SECRET'));
+assert.equal(manifest.payments.scheduler, undefined);
+console.log('Lite manifest, lockfile, build and source contract are consistent.');
