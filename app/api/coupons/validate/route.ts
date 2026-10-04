@@ -5,6 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
+import { calculateDiscountAmount, couponLookupSchema, discountAvailabilityError, publicDiscount, moneyDecimals } from "@/lib/discounts";
+import { discountApiError } from "@/lib/discount-feedback";
+import Decimal from "decimal.js";
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,64 +22,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { code, orderAmount } = body;
-
-    if (!code || !orderAmount) {
-      return NextResponse.json(
-        { error: "Code and amount required" },
-        { status: 400 }
-      );
-    }
+    const { code, orderAmount } = couponLookupSchema.parse(await request.json());
 
     // Use discountCode model as defined in schema
     const coupon = await db.discountCode.findUnique({
-      where: { code: code.toUpperCase() },
+      where: { code },
     });
 
-    if (!coupon || !coupon.isActive) {
+    if (!coupon) {
       return NextResponse.json(
         { error: "Invalid coupon code" },
         { status: 404 }
       );
     }
 
-    // Check expiry
-    if (coupon.expiresAt && new Date() > coupon.expiresAt) {
-      return NextResponse.json(
-        { error: "Coupon has expired" },
-        { status: 400 }
-      );
-    }
-
-    // Note: Schema doesn't have usageLimit, minAmount, maxDiscount yet.
-    // Skipping those checks for now to match current schema.
-
-    // Calculate discount
-    let discount = 0;
-    if (coupon.type === "FIXED") {
-      discount = coupon.value;
-    } else if (coupon.type === "PERCENT") {
-      discount = (orderAmount * coupon.value) / 100;
-      // if (coupon.maxDiscount) ... // Not in schema
-    }
-
-    const finalAmount = Math.max(0, orderAmount - discount);
+    const error = discountAvailabilityError(coupon, new Date(), orderAmount);
+    if (error) return NextResponse.json({ error }, { status: 400 });
+    const settings = await db.storeSettings.findFirst();
+    const currency = settings?.currency || "USD";
+    const discount = calculateDiscountAmount(orderAmount, coupon, currency);
+    const finalAmount = new Decimal(orderAmount).toDecimalPlaces(moneyDecimals(currency), Decimal.ROUND_HALF_UP).sub(discount).toNumber();
 
     return NextResponse.json({
       valid: true,
       discount,
       finalAmount,
       couponId: coupon.id,
-      code: coupon.code,
-      type: coupon.type, // "FIXED" | "PERCENT"
-      value: coupon.value,
+      ...publicDiscount(coupon),
     });
   } catch (error) {
-    console.error("Coupon validation error:", error);
-    return NextResponse.json(
-      { error: "Failed to validate coupon" },
-      { status: 500 }
-    );
+    const failure = discountApiError(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

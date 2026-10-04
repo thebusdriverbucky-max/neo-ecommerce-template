@@ -14,6 +14,7 @@ import { normalizeCurrency, roundMoney, toMinorUnits } from "@/lib/money";
 import { calculateCheckoutTotals } from "@/lib/checkout-totals";
 import { buildDiscountedProductLineItems } from "@/lib/stripe-line-items";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
+import { discountAvailabilityError } from "@/lib/discounts";
 import { createOrderSchema } from "@/lib/validations";
 import { stripe } from "@/lib/stripe";
 import { getStripeDeploymentId } from "@/lib/stripe-payment-integrity";
@@ -219,12 +220,11 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
 
     if (discountCode) {
       const found = await db.discountCode.findUnique({ where: { code: discountCode.toUpperCase() } });
-      if (!found || !found.isActive || (found.expiresAt && found.expiresAt <= new Date())) {
+      if (!found) {
         return NextResponse.json({ error: "Invalid or expired discount code" }, { status: 400 });
       }
-      if (found.type === "PERCENT" && (found.value <= 0 || found.value > 100)) {
-        return NextResponse.json({ error: "The discount configuration is invalid" }, { status: 400 });
-      }
+      const discountError = discountAvailabilityError(found, new Date(), subtotal.toNumber());
+      if (discountError) return NextResponse.json({ error: discountError }, { status: 400 });
       discount = { type: found.type, value: found.value };
     }
 

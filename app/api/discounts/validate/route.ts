@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
+import { discountAvailabilityError, discountLookupSchema, publicDiscount } from "@/lib/discounts";
+import { discountApiError } from "@/lib/discount-feedback";
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,17 +19,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { code } = await request.json();
-
-    if (!code) {
-      return NextResponse.json(
-        { error: "Code is required" },
-        { status: 400 }
-      );
-    }
+    const { code, orderAmount } = discountLookupSchema.parse(await request.json());
 
     const discount = await db.discountCode.findUnique({
-      where: { code: code.toUpperCase() },
+      where: { code },
     });
 
     if (!discount) {
@@ -37,40 +32,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!discount.isActive) {
-      return NextResponse.json(
-        { error: "Discount code is inactive" },
-        { status: 400 }
-      );
-    }
-
-    if (discount.expiresAt) {
-      const expirationDate = new Date(discount.expiresAt);
-      // Устанавливаем время истечения на конец дня (23:59:59.999)
-      expirationDate.setHours(23, 59, 59, 999);
-
-      const now = new Date();
-
-      // Check if the discount code has expired
-      // We compare timestamps to ensure accurate comparison regardless of timezones
-      if (expirationDate.getTime() < now.getTime()) {
-        return NextResponse.json(
-          { error: "Discount code has expired" },
-          { status: 400 }
-        );
-      }
-    }
-
-    return NextResponse.json({
-      code: discount.code,
-      type: discount.type,
-      value: discount.value,
-    });
+    const error = discountAvailabilityError(discount, new Date(), orderAmount);
+    if (error) return NextResponse.json({ error }, { status: 400 });
+    return NextResponse.json(publicDiscount(discount));
   } catch (error) {
-    console.error("Discount validation error:", error);
-    return NextResponse.json(
-      { error: "Failed to validate discount" },
-      { status: 500 }
-    );
+    const failure = discountApiError(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

@@ -9,29 +9,17 @@ import { CouponInput } from "./coupon-input";
 import { Button } from "@/components/ui/Button";
 import { X } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
+import { calculateStorefrontTotals } from "@/lib/discounts";
 
 interface OrderSummaryProps {
   items: CartItem[];
 }
 
 export function OrderSummary({ items }: OrderSummaryProps) {
-  const { applyDiscount, removeDiscount, discount, getDiscountAmount } = useCart();
+  const { applyDiscount, removeDiscount, discount } = useCart();
   const { settings } = useSettings();
 
-  const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
-  const discountAmount = getDiscountAmount();
-
-  // Calculate tax on the discounted amount (standard practice)
-  const taxableAmount = Math.max(0, subtotal - discountAmount);
-
-  const taxRate = settings?.taxRate ?? 0;
-  const freeShippingThreshold = settings?.freeShippingThreshold ?? Infinity;
-  const shippingCost =
-    taxableAmount >= freeShippingThreshold ? 0 : settings?.shippingCost ?? 0;
-
-  const tax = taxableAmount * (taxRate / 100);
-  const shipping = shippingCost;
-  const total = taxableAmount + tax + shipping;
+  const { subtotal, discountAmount, discountError, tax, shipping, total } = calculateStorefrontTotals(items, discount, settings);
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg">
@@ -73,7 +61,7 @@ export function OrderSummary({ items }: OrderSummaryProps) {
               <p className="text-xs text-green-600">
                 {discount.type === "PERCENT"
                   ? `${discount.value}% off`
-                  : `$${discount.value} off`}
+                  : `${formatPrice(discount.value, settings?.currency)} off`}
               </p>
             </div>
             <Button
@@ -88,6 +76,7 @@ export function OrderSummary({ items }: OrderSummaryProps) {
         )}
       </div>
 
+      {discountError && <p role="alert" className="text-red-600 text-sm mb-4">{discountError}. Remove or replace this code before checkout.</p>}
       <div className="border-t pt-4 space-y-2">
         <div className="flex justify-between text-sm">
           <span>Subtotal</span>
