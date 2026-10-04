@@ -2,6 +2,11 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    // JSDOM reads assets relative to its installed files. Externalize the
+    // whole sanitizer so nested JSDOM versions are not bundled into .next.
+    serverComponentsExternalPackages: ["isomorphic-dompurify"],
+  },
   images: {
     domains: ["res.cloudinary.com", "localhost", "i.imgur.com"],
     remotePatterns: [
