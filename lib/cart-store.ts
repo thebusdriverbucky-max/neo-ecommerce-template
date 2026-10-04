@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { reconcilePurchasedCart, CartSnapshotLine } from "./cart-reconciliation";
+import { calculateDiscountAmount, discountAvailabilityError, Discount as DiscountRules } from "@/lib/discounts";
 
 export interface CartItem {
   productId: string;
@@ -13,7 +14,7 @@ export interface CartItem {
   stock: number;
 }
 
-export interface Discount {
+export interface Discount extends DiscountRules {
   code: string;
   type: "PERCENT" | "FIXED";
   value: number;
@@ -107,11 +108,8 @@ export const useCart = create<CartStore>()(
 
         if (!discount) return 0;
 
-        if (discount.type === "FIXED") {
-          return Math.min(discount.value, subtotal);
-        } else {
-          return (subtotal * discount.value) / 100;
-        }
+        if (discountAvailabilityError(discount, new Date(), subtotal)) return 0;
+        return calculateDiscountAmount(subtotal, discount);
       },
       getTotalPrice: () => {
         const { items } = get();

@@ -6,9 +6,12 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { AlertCircle, Check } from "lucide-react";
+import { Discount } from "@/lib/cart-store";
+import { useSettings } from "@/components/providers/settings-provider";
+import { formatPrice } from "@/lib/utils";
 
 interface CouponInputProps {
-  onApplyCoupon: (discount: { code: string; type: "PERCENT" | "FIXED"; value: number }) => void;
+  onApplyCoupon: (discount: Discount) => void;
   orderTotal: number;
 }
 
@@ -18,6 +21,7 @@ export function CouponInput({ onApplyCoupon, orderTotal }: CouponInputProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [discountAmount, setDiscountAmount] = useState(0);
+  const { currency } = useSettings();
 
   const handleValidateCoupon = async () => {
     if (!code.trim()) return;
@@ -47,7 +51,10 @@ export function CouponInput({ onApplyCoupon, orderTotal }: CouponInputProps) {
       onApplyCoupon({
         code: data.code,
         type: data.type,
-        value: data.value
+        value: data.value,
+        expiresAt: data.expiresAt,
+        minAmount: data.minAmount,
+        maxDiscount: data.maxDiscount,
       });
 
     } catch (err) {
@@ -90,7 +97,7 @@ export function CouponInput({ onApplyCoupon, orderTotal }: CouponInputProps) {
       {success && (
         <div className="flex items-center gap-2 text-green-600 text-sm">
           <Check className="w-4 h-4" />
-          Discount applied: ${discountAmount.toFixed(2)}
+          Discount applied: {formatPrice(discountAmount, currency)}
         </div>
       )}
     </div>

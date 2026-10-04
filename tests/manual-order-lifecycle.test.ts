@@ -182,6 +182,47 @@ test("creation aggregates duplicate lines, uses server totals/snapshot and condi
   assert.equal(db.state().orders[0].reservationExpiresAt.toISOString(), "2030-01-08T00:00:00.000Z");
 });
 
+test("discount availability and rounding are enforced inside the order transaction", async () => {
+  const baseDiscount = { id: "d1", code: "SAVE", type: "PERCENT", value: 10, isActive: true, used: 0 };
+  for (const override of [
+    { value: 0 }, { value: -1 }, { value: 150 }, { type: "FIXED", value: -5 },
+    { expiresAt: baseInput.now }, { isActive: false }, { minAmount: 100 }, { usageLimit: 1, used: 1 },
+  ]) {
+    const db = fakeDb({ discounts: [{ ...baseDiscount, ...override }] });
+    await assert.rejects(() => manual.createManualOrder(db, { ...baseInput, discountCode: " save ",
+      items: [{ productId: "product000000000000000000001", quantity: 1 }] }), /invalid|expired|inactive|minimum|limit/i);
+    assert.equal(db.state().orders.length, 0);
+    assert.equal(db.state().products[0].stock, 5);
+  }
+  const db = fakeDb({ discounts: [{ ...baseDiscount, type: "FIXED", value: 200, usageLimit: 1 }] });
+  await manual.createManualOrder(db, { ...baseInput, discountCode: " save ",
+    items: [{ productId: "product000000000000000000001", quantity: 1 }] });
+  assert.equal(db.state().orders[0].discountAmount, 10);
+  assert.equal(db.state().orders[0].tax, 0);
+  assert.equal(db.state().orders[0].total, 5);
+  assert.equal(db.state().discounts[0].used, 1);
+});
+
+test("discount caps including zero remain consistent with previews", async () => {
+  for (const [maxDiscount, expected] of [[0, 0], [1.25, 1.25]] as const) {
+    const db = fakeDb({ discounts: [{ id: "d1", code: "SAVE", type: "PERCENT", value: 50, maxDiscount, isActive: true, used: 0 }] });
+    await manual.createManualOrder(db, { ...baseInput, discountCode: "SAVE",
+      items: [{ productId: "product000000000000000000001", quantity: 1 }] });
+    assert.equal(db.state().orders[0].discountAmount, expected);
+  }
+});
+
+test("concurrent orders cannot claim a single-use discount twice", async () => {
+  const db = fakeDb({ discounts: [{ id: "d1", code: "ONCE", type: "FIXED", value: 1, isActive: true, used: 0, usageLimit: 1 }] });
+  const results = await Promise.allSettled(["request_first_123", "request_second_123"].map(idempotencyKey =>
+    manual.createManualOrder(db, { ...baseInput, idempotencyKey, discountCode: "ONCE",
+      items: [{ productId: "product000000000000000000001", quantity: 1 }] })));
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(db.state().orders.length, 1);
+  assert.equal(db.state().discounts[0].used, 1);
+  assert.equal(db.state().products[0].stock, 4);
+});
+
 test("checkout without an IBAN still creates a seven-day reservation with a nullable payment snapshot", async () => {
   const db = fakeDb({
     settings: {

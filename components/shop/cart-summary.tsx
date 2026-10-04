@@ -8,28 +8,21 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { X } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
+import { calculateStorefrontTotals } from "@/lib/discounts";
 
 export function CartSummary() {
-  const { items, discount, applyDiscount, removeDiscount, getDiscountAmount } = useCart();
+  const { items, discount, applyDiscount, removeDiscount } = useCart();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { settings } = useSettings();
 
-  const subtotal = items.reduce((total, item) => total + item.price * item.quantity, 0);
-  const discountAmount = getDiscountAmount();
-  const totalAfterDiscount = Math.max(0, subtotal - discountAmount);
-
+  const { subtotal, discountAmount, discountError, tax, shipping, total: finalTotal } = calculateStorefrontTotals(items, discount, settings, "subtotal");
   const currency = settings?.currency || "USD";
   const taxRate = settings?.taxRate ?? 0;
-  const shippingCost = settings?.shippingCost ?? 0;
-
-  const tax = totalAfterDiscount * (taxRate / 100);
-  const shipping = shippingCost;
-  const finalTotal = totalAfterDiscount + tax + shipping;
 
   const handleApplyDiscount = async () => {
-    if (!code) return;
+    if (!code.trim()) return;
     setLoading(true);
     setError("");
 
@@ -37,7 +30,7 @@ export function CartSummary() {
       const response = await fetch("/api/discounts/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, orderAmount: subtotal }),
       });
 
       const data = await response.json();
@@ -82,12 +75,13 @@ export function CartSummary() {
               onChange={(e) => setCode(e.target.value)}
               className="bg-white"
             />
-            <Button onClick={handleApplyDiscount} disabled={loading || !code}>
+            <Button onClick={handleApplyDiscount} disabled={loading || !code.trim()}>
               Apply
             </Button>
           </div>
         )}
         {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+        {discountError && <p role="alert" className="text-red-500 text-sm mt-1">{discountError}. Remove or replace this code before checkout.</p>}
 
         <div className="flex justify-between mt-4">
           <span>Tax ({taxRate}%)</span>

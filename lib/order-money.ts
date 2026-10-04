@@ -1,6 +1,10 @@
+import Decimal from "decimal.js";
+import { calculateDiscountAmount } from "./discounts";
+
 export type DiscountInput = {
   type: "FIXED" | "PERCENT";
   value: number | string;
+  maxDiscount?: number | string | null;
 };
 
 export type OrderMoney = {
@@ -49,12 +53,9 @@ export function calculateOrderMoney(input: {
 
   let discountMinor = 0;
   if (input.discount) {
-    const value = Number(input.discount.value);
-    if (!Number.isFinite(value) || value < 0) throw new Error("Invalid discount");
-    discountMinor = input.discount.type === "FIXED"
-      ? toMinorUnits(input.discount.value)
-      : Math.round((subtotalMinor * Math.min(value, 100)) / 100);
-    discountMinor = Math.min(subtotalMinor, discountMinor);
+    discountMinor = toMinorUnits(calculateDiscountAmount(fromMinorUnits(subtotalMinor), {
+      type: input.discount.type, value: Number(input.discount.value), maxDiscount: input.discount.maxDiscount,
+    }));
   }
 
   const taxableMinor = subtotalMinor - discountMinor;
@@ -64,10 +65,9 @@ export function calculateOrderMoney(input: {
   if (!Number.isSafeInteger(input.shippingMinor) || input.shippingMinor < 0) {
     throw new Error("Invalid shipping amount");
   }
-  const taxMinor = Math.round((taxableMinor * input.taxRatePercent) / 100);
+  const taxMinor = new Decimal(taxableMinor).mul(input.taxRatePercent).div(100).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
   const totalMinor = taxableMinor + taxMinor + input.shippingMinor;
   if (!Number.isSafeInteger(totalMinor) || totalMinor > MAX_SAFE_MINOR) throw new Error("Order total is outside the supported range");
 
   return { subtotalMinor, discountMinor, taxableMinor, taxMinor, shippingMinor: input.shippingMinor, totalMinor };
 }
-

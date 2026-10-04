@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { calculateOrderMoney, fromMinorUnits, toMinorUnits } from "./order-money";
+import { discountAvailabilityError } from "./discounts";
 import {
   assertOrderTransition,
   OrderStatusValue,
@@ -138,27 +139,22 @@ export async function createManualOrder(db: any, input: {
     const discountCode = input.discountCode?.trim().toUpperCase();
     if (discountCode) {
       discount = await tx.discountCode.findUnique({ where: { code: discountCode } });
-      if (!discount || !discount.isActive || (discount.expiresAt && discount.expiresAt <= now)) {
+      if (!discount) {
         throw new OrderInputError("Discount code is invalid or expired");
       }
       const preliminarySubtotal = lines.reduce((sum, line) => sum + toMinorUnits(line.unitPrice) * line.quantity, 0);
-      if (discount.minAmount != null && preliminarySubtotal < toMinorUnits(String(discount.minAmount))) {
-        throw new OrderInputError("Order does not meet the discount minimum");
-      }
-      if (discount.type === "PERCENT" && (Number(discount.value) < 0 || Number(discount.value) > 100)) {
-        throw new OrderInputError("Discount configuration is invalid");
-      }
+      const discountError = discountAvailabilityError(discount, now, fromMinorUnits(preliminarySubtotal));
+      if (discountError) throw new OrderInputError(discountError);
     }
 
     const subtotalMinor = lines.reduce((sum, line) => sum + toMinorUnits(line.unitPrice) * line.quantity, 0);
     const freeShippingMinor = toMinorUnits(String(settings.freeShippingThreshold ?? 0));
     const shippingMinor = subtotalMinor >= freeShippingMinor ? 0 : toMinorUnits(String(settings.shippingCost ?? 0));
-    let effectiveDiscount = discount ? { type: discount.type, value: discount.value } : null;
-    let money = calculateOrderMoney({ lines, discount: effectiveDiscount, taxRatePercent: Number(settings.taxRate ?? 0), shippingMinor });
-    if (discount?.maxDiscount != null && money.discountMinor > toMinorUnits(String(discount.maxDiscount))) {
-      effectiveDiscount = { type: "FIXED", value: String(discount.maxDiscount) };
-      money = calculateOrderMoney({ lines, discount: effectiveDiscount, taxRatePercent: Number(settings.taxRate ?? 0), shippingMinor });
-    }
+    const effectiveDiscount = discount ? {
+      type: discount.type, value: discount.value,
+      maxDiscount: discount.maxDiscount == null ? null : String(discount.maxDiscount),
+    } : null;
+    const money = calculateOrderMoney({ lines, discount: effectiveDiscount, taxRatePercent: Number(settings.taxRate ?? 0), shippingMinor });
 
     if (discount) {
       const claimed = await tx.discountCode.updateMany({
