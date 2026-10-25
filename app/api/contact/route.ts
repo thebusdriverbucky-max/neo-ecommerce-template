@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmail } from "@/lib/email";
+import { getContactMessageEmailHtml } from "@/lib/email-templates";
+import { headerText } from "@/lib/html";
+import { getStoreSettings, adminNotificationEmail, storeDisplayName } from "@/lib/store-settings";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const contactSchema = z.object({
-  name: z.string().min(2).max(100),
-  email: z.string().email(),
-  subject: z.string().min(5).max(200),
-  message: z.string().min(10).max(2000),
+  name: z.string().trim().min(2).max(100),
+  email: z.string().trim().email().max(254),
+  subject: z.string().trim().min(5).max(200),
+  message: z.string().trim().min(10).max(2000),
 });
 
 export async function POST(request: NextRequest) {
@@ -23,53 +26,36 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+
+    // Honeypot: bots fill every field. Pretend it worked and send nothing.
+    if (typeof body?.website === "string" && body.website.trim() !== "") {
+      return NextResponse.json({ success: true, message: "Message sent successfully" }, { status: 200 });
+    }
+
     const { name, email, subject, message } = contactSchema.parse(body);
 
-    // Send email to admin
-    const adminHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">New Contact Form Submission</h2>
-        
-        <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>From:</strong> ${name} (${email})</p>
-          <p><strong>Subject:</strong> ${subject}</p>
-          <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
-        </div>
+    const settings = await getStoreSettings();
+    const adminEmail = adminNotificationEmail(settings);
 
-        <h3>Message:</h3>
-        <p style="white-space: pre-wrap; color: #374151;">${message}</p>
-      </div>
-    `;
+    if (!adminEmail) {
+      console.error("Contact form: no store email or ADMIN_EMAIL configured; message dropped");
+      return NextResponse.json({ error: "Failed to send message" }, { status: 500 });
+    }
 
+    // Only the store owner is notified. The submitter is never emailed
+    // automatically: an auto-reply to an arbitrary address would let anyone
+    // send mail from the store's domain. The owner replies via Reply-To.
     await sendEmail({
-      to: process.env.ADMIN_EMAIL || "admin@store.com",
-      subject: `New Contact: ${subject}`,
-      html: adminHtml,
-    });
-
-    // Send confirmation email to user
-    const userHtml = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">Thank You For Contacting Us</h2>
-        <p>Hi ${name},</p>
-        
-        <p>We received your message and will get back to you as soon as possible, typically within 24-48 hours.</p>
-        
-        <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Subject:</strong> ${subject}</p>
-          <p><strong>Received:</strong> ${new Date().toLocaleDateString()}</p>
-        </div>
-
-        <p>If you don't hear from us within 48 hours, please check your spam folder or contact us directly at support@store.com</p>
-        
-        <p>Best regards,<br/>The Support Team</p>
-      </div>
-    `;
-
-    await sendEmail({
-      to: email,
-      subject: `Re: ${subject}`,
-      html: userHtml,
+      to: adminEmail,
+      replyTo: email,
+      subject: headerText(`New Contact: ${subject}`),
+      html: getContactMessageEmailHtml({
+        name,
+        email,
+        subject,
+        message,
+        storeName: storeDisplayName(settings),
+      }),
     });
 
     return NextResponse.json(
@@ -77,6 +63,9 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
     console.error("Contact form error:", error);
     return NextResponse.json(
       { error: "Failed to send message" },

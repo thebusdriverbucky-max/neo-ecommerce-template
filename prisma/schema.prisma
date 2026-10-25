@@ -110,7 +110,9 @@ model Cart {
 model Order {
   id             String      @id @default(cuid())
   userId         String?
-  user           User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Orders are financial records: deleting a customer account detaches them
+  // instead of deleting paid orders, items and refund history.
+  user           User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   guestEmail     String?
   items          OrderItem[]
   status         OrderStatus @default(PENDING)
@@ -134,6 +136,10 @@ model Order {
   guestAccessTokenHash      String?   @unique
   guestAccessTokenExpiresAt DateTime?
 
+  // Keyed HMAC of the trusted client IP, used only to cap concurrent unpaid
+  // stock reservations. The raw IP address is never stored.
+  checkoutIpHash String?
+
   shippingAddressId String?
   shippingAddress   Address? @relation("shipping", fields: [shippingAddressId], references: [id])
 
@@ -148,6 +154,15 @@ model Order {
   @@index([userId])
   @@index([status])
   @@index([createdAt])
+  @@index([checkoutIpHash, status, createdAt])
+}
+
+// One row per calendar year (UTC). Incremented atomically to allocate
+// sequential order numbers without races between concurrent checkouts.
+model OrderNumberCounter {
+  year      Int      @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
 }
 
 model OrderItem {
@@ -166,7 +181,8 @@ model OrderItem {
 model Address {
   id     String  @id @default(cuid())
   userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Addresses referenced by orders must survive account deletion.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   firstName  String
   lastName   String
@@ -287,7 +303,8 @@ model StoreSettings {
   currency              String   @default("USD")
   taxRate               Float    @default(0)
   shippingCost          Float    @default(0)
-  freeShippingThreshold Float    @default(500)
+  // null disables free shipping; 0 makes every order ship free.
+  freeShippingThreshold Float?   @default(500)
   enabledCountries      String[]
   enabledCategories     String[]
   tiktokUrl             String?

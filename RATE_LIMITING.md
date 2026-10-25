@@ -34,6 +34,16 @@ and pricing before launch because platform allowances can change.
 If the store is deployed somewhere other than Vercel, configure an equivalent
 rate limit in the hosting provider, reverse proxy or CDN.
 
+## Built-in cap on unpaid checkouts (no Upstash needed)
+
+Without Upstash the application also caps how many unpaid checkouts a single IP
+address can hold open: at most 5 pending checkouts per 30 minutes. This stops one
+visitor from reserving all of your stock with abandoned carts. Only a keyed hash
+of the client IP is stored, never the address itself, and the cap is applied only
+on Vercel, where the client IP is set by the platform and cannot be spoofed.
+Completed or expired checkouts stop counting. On other hosts, configure an
+equivalent limit in your proxy or CDN.
+
 ## Optional advanced layer: Upstash Redis
 
 Set both variables to enable application-level limits:
@@ -46,7 +56,9 @@ UPSTASH_REDIS_REST_TOKEN=...
 Upstash adds separate policies for orders, authentication, password recovery,
 contact requests, coupons, reviews, wishlist and admin APIs. It can count by an
 authenticated user ID or guest email instead of relying only on an IP address,
-uses longer windows and shares counters globally.
+uses longer windows and shares counters globally. When Upstash is configured, an
+additional per-IP order limiter applies to checkout creation on top of the
+per-user/guest limits.
 
 Both values must come from the same active Upstash database. If only one value
 is supplied, the production application treats the setup as broken and returns

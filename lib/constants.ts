@@ -237,3 +237,13 @@ export const PRODUCT_CATEGORIES = [
 ] as const;
 
 export const DEFAULT_CATEGORIES = ['Electronics', 'Clothing', 'Home', 'Sports'];
+
+/** Languages offered for the <html lang> attribute (admin settings). */
+export const SITE_LANGUAGES = [
+  { code: 'en', label: 'English (en)' },
+  { code: 'ru', label: 'Russian (ru)' },
+  { code: 'uk', label: 'Ukrainian (uk)' },
+  { code: 'de', label: 'German (de)' },
+  { code: 'fr', label: 'French (fr)' },
+  { code: 'es', label: 'Spanish (es)' },
+] as const;

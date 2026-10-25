@@ -330,30 +330,6 @@
       "defaultAvailable": false
     },
     {
-      "name": "NEXT_PUBLIC_STORE_NAME",
-      "required": false,
-      "feature": "presentation-fallbacks",
-      "secret": false,
-      "scope": "client",
-      "valueGroup": null,
-      "description": "Optional store-name fallback when CMS settings are unavailable.",
-      "providerDocsUrl": null,
-      "validation": { "type": "string", "minLength": 1 },
-      "defaultAvailable": true
-    },
-    {
-      "name": "STORE_SUPPORT_EMAIL",
-      "required": false,
-      "feature": "presentation-fallbacks",
-      "secret": false,
-      "scope": "server",
-      "valueGroup": null,
-      "description": "Optional support-address fallback used in order emails.",
-      "providerDocsUrl": null,
-      "validation": { "type": "email" },
-      "defaultAvailable": true
-    },
-    {
       "name": "NEXT_PUBLIC_SUPPORT_EMAIL",
       "required": false,
       "feature": "presentation-fallbacks",
@@ -363,18 +339,6 @@
       "description": "Optional support address displayed on the license-required page.",
       "providerDocsUrl": null,
       "validation": { "type": "email" },
-      "defaultAvailable": true
-    },
-    {
-      "name": "NEXT_PUBLIC_CURRENCY_SYMBOL",
-      "required": false,
-      "feature": "presentation-fallbacks",
-      "secret": false,
-      "scope": "client",
-      "valueGroup": null,
-      "description": "Optional email and UI currency-symbol fallback; payment currency remains server controlled.",
-      "providerDocsUrl": null,
-      "validation": { "type": "string", "minLength": 1, "maxLength": 8 },
       "defaultAvailable": true
     },
     {

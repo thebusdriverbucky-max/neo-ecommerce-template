@@ -3,12 +3,13 @@ import { stripe } from "@/lib/stripe";
 import { confirmOrder, handleOrderCancellation } from "@/lib/order-confirmation";
 import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 import { logger } from "@/lib/logger";
+import { getStoreSettings } from "@/lib/store-settings";
 import {
   assertCheckoutSessionMatchesOrder,
   assertPaymentIntentMatchesOrder,
   isStripeMetadataForThisDeployment,
 } from "@/lib/stripe-payment-integrity";
-import { Prisma } from "@prisma/client";
+import type { Prisma, StoreSettings } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -115,7 +116,7 @@ export async function GET(request: NextRequest) {
     });
 
     const sessionLookup = await findOrphanedCheckoutSessions(pendingOrders);
-    let storeSettings: unknown;
+    let storeSettings: StoreSettings | null = null;
     let settingsLoaded = false;
     const summary = {
       scanned: pendingOrders.length,
@@ -125,9 +126,9 @@ export async function GET(request: NextRequest) {
       failed: 0,
     };
 
-    const getStoreSettings = async () => {
+    const loadStoreSettings = async () => {
       if (!settingsLoaded) {
-        storeSettings = await db.storeSettings.findFirst();
+        storeSettings = await getStoreSettings();
         settingsLoaded = true;
       }
       return storeSettings;
@@ -168,7 +169,7 @@ export async function GET(request: NextRequest) {
                 ? checkoutSession.payment_intent
                 : paymentIntentId,
               checkoutSessionId: checkoutSession.id,
-            }, await getStoreSettings());
+            }, await loadStoreSettings());
             summary.confirmed += 1;
             continue;
           }
@@ -187,7 +188,7 @@ export async function GET(request: NextRequest) {
           const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
           assertPaymentIntentMatchesOrder(paymentIntent, order);
           if (paymentIntent.status === "succeeded") {
-            await confirmOrder(order.id, { paymentIntentId }, await getStoreSettings());
+            await confirmOrder(order.id, { paymentIntentId }, await loadStoreSettings());
             summary.confirmed += 1;
             continue;
           }

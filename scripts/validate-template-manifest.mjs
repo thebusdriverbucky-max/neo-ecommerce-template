@@ -106,7 +106,12 @@ function scanDirectory(directory) {
 
 scanDirectory(root);
 
-const nonDeploymentGuards = new Set(["ALLOW_DEMO_RESET"]);
+const nonDeploymentGuards = new Set([
+  "ALLOW_DEMO_RESET",
+  // Database integration tests only (tests/db); never set on a deployment.
+  "TEST_DATABASE_URL",
+  "ALLOW_REMOTE_TEST_DATABASE",
+]);
 for (const name of directRuntimeNames) {
   if (!manifestNames.has(name) && !nonDeploymentGuards.has(name)) {
     fail(`runtime ENV ${name} is missing from the manifest`);

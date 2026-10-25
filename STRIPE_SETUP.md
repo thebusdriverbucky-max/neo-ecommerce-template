@@ -91,6 +91,30 @@ active store, resolve existing pending orders under the old release or review
 them manually in Stripe and the admin dashboard. New checkouts created after the
 upgrade carry the marker automatically.
 
+## Cancelled orders and late payments
+
+Cancelling a pending order from the admin first expires its Stripe Checkout
+Session, so the customer can no longer pay it. If a payment still reaches an
+order that was cancelled (for example the customer paid at the same moment),
+the application refunds it automatically and emails the store owner so it can be
+checked in Stripe. If the automatic refund fails, the email says so and the
+payment must be refunded manually from the Stripe Dashboard.
+
+A customer who returns from Stripe without paying can start a new checkout
+immediately: their previous unpaid checkout is released (its Session is expired
+and its stock reservation returned), so they do not have to wait for it to
+time out.
+
+## Refunds from the admin
+
+Paid orders are not cancelled; they are refunded. **Admin -> Orders -> Manage
+-> Refund** refunds what is left of the payment through Stripe and marks the
+order `REFUNDED` right away (or once Stripe confirms a refund that is still
+pending). While the order has not shipped, **Return the items to stock** puts
+the items back; the stock is returned once, even though Stripe also sends
+`refund.created` and `refund.updated` for the same refund. Partial refunds are
+made in the Stripe Dashboard and update the order through the webhook.
+
 ## Required test scenarios
 
 Use Stripe test mode and verify both Stripe Workbench and the admin order:
@@ -105,12 +129,38 @@ Use Stripe test mode and verify both Stripe Workbench and the admin order:
 8. Apply fixed and percentage discounts; Stripe amount must match the order total.
 9. Test taxable and non-taxable configurations.
 10. Test paid and free shipping.
-11. Create a partial refund; order becomes `PARTIALLY_REFUNDED`.
-12. Refund the remaining amount; order becomes `REFUNDED`.
+11. Create a partial refund in the Stripe Dashboard; order becomes
+    `PARTIALLY_REFUNDED`.
+12. Refund the remaining amount (Dashboard or the admin **Refund** button);
+    order becomes `REFUNDED`.
 13. Send a correctly signed event carrying another deployment ID; it must return
     success without changing an order in this store.
 14. Verify a wrong amount, currency, Order ID, Session ID, or PaymentIntent ID
     cannot confirm an order.
+
+15. Start checkout and close the Stripe tab without paying; the order stays
+    `Pending payment`. In **Admin -> Orders -> Manage** press **Cancel order**.
+    Its Checkout Session must show as expired in Stripe and the stock must be
+    restored once.
+16. Late payment for a cancelled order. With webhooks forwarded (`stripe listen`),
+    start checkout and keep the Stripe payment page open. In another terminal
+    run `npm run prisma:studio`, open the order and set its `status` to
+    `CANCELLED` (this imitates a cancel that lands while the customer is paying;
+    unlike the admin button it does not expire the Session or return stock).
+    Then pay on the still-open Stripe page. The payment must be refunded
+    automatically, the order must stay cancelled and the store owner must get an
+    email. Resending the same event from Workbench does nothing, because each
+    event is processed once. The "refund failed, check Stripe" alert is covered
+    by the automated tests (`npm test`).
+17. Start checkout, press Back on Stripe's page to return to the store, then start
+    checkout again immediately; the second attempt must work and the first
+    session must be expired in Stripe.
+18. Pay an order, then in **Manage** press **Refund** with **Return the items to
+    stock** ticked. Stripe must show the payment as refunded, the order must
+    become `REFUNDED`, and the stock must go back up once (check it again after
+    the `refund.created` and `refund.updated` webhooks arrive).
+19. Mark a paid order `Shipped`, then press **Refund**; the stock option is not
+    offered, the order becomes `REFUNDED` and the stock does not change.
 
 The success redirect is not the source of truth. Order state is driven by
 signature-verified Stripe webhooks; the success page only provides a recovery

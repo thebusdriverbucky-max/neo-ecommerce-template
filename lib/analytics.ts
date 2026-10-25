@@ -16,7 +16,7 @@ export const analytics = {
     }
   },
 
-  // Track purchases (для Stripe webhook)
+  // Track purchases (for the Stripe webhook)
   purchase: (orderId: string, value: number, items: any[]) => {
     if (typeof window !== 'undefined' && window.gtag) {
       window.gtag('event', 'purchase', {

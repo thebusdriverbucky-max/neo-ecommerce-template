@@ -11,7 +11,7 @@ type SitemapProduct = {
 };
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = "https://neo-e-commerce.vercel.app";
+  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://neo-e-commerce.vercel.app").replace(/\/+$/, "");
 
   // Static pages
   const staticPages: MetadataRoute.Sitemap = [

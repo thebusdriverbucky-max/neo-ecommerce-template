@@ -1,8 +1,10 @@
 import Link from "next/link";
-import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import type { Prisma } from "@prisma/client";
+import { StoreImage } from "@/components/ui/StoreImage";
+import { getStoreSettings } from "@/lib/store-settings";
 import { Button } from "@/components/ui/Button";
 import { CheckCircle2, Package, Truck, CreditCard, MapPin, AlertCircle } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
@@ -21,36 +23,40 @@ interface OrderDetailsPageProps {
   };
 }
 
+const orderSelect = {
+  id: true,
+  userId: true,
+  guestEmail: true,
+  guestAccessTokenHash: true,
+  guestAccessTokenExpiresAt: true,
+  status: true,
+  stripeCheckoutSessionId: true,
+  stripePaymentIntentId: true,
+  orderNumber: true,
+  createdAt: true,
+  currency: true,
+  subtotal: true,
+  discountAmount: true,
+  refundedAmount: true,
+  tax: true,
+  shippingCost: true,
+  total: true,
+  trackingNumber: true,
+  items: {
+    include: {
+      product: true,
+    },
+  },
+  shippingAddress: true,
+} satisfies Prisma.OrderSelect;
+
 export default async function OrderDetailsPage({ params, searchParams }: OrderDetailsPageProps) {
   const session = await auth();
   const isSuccess = searchParams.success === "true";
 
   let order = await db.order.findUnique({
     where: { id: params.id },
-    select: {
-      id: true,
-      userId: true,
-      guestEmail: true,
-      guestAccessTokenHash: true,
-      guestAccessTokenExpiresAt: true,
-      status: true,
-      stripeCheckoutSessionId: true,
-      stripePaymentIntentId: true,
-      orderNumber: true,
-      createdAt: true,
-      currency: true,
-      subtotal: true,
-      tax: true,
-      shippingCost: true,
-      total: true,
-      trackingNumber: true,
-      items: {
-        include: {
-          product: true,
-        },
-      },
-      shippingAddress: true,
-    },
+    select: orderSelect,
   });
 
   if (!order) {
@@ -99,36 +105,13 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
       }
 
       if (isPaid) {
-        const settings = await db.storeSettings.findFirst();
+        const settings = await getStoreSettings();
         await confirmOrder(order.id, { paymentIntentId, checkoutSessionId }, settings);
 
         // Refresh order data after confirmation
           const updatedOrder = await db.order.findUnique({
             where: { id: params.id },
-            select: {
-              id: true,
-              userId: true,
-              guestEmail: true,
-              guestAccessTokenHash: true,
-              guestAccessTokenExpiresAt: true,
-              status: true,
-              stripeCheckoutSessionId: true,
-              stripePaymentIntentId: true,
-              orderNumber: true,
-              createdAt: true,
-              currency: true,
-              subtotal: true,
-              tax: true,
-              shippingCost: true,
-              total: true,
-              trackingNumber: true,
-              items: {
-                include: {
-                  product: true,
-                },
-              },
-            shippingAddress: true,
-          },
+            select: orderSelect,
         });
         if (updatedOrder) {
           order = updatedOrder;
@@ -200,7 +183,7 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
               {order.items.map((item) => (
                 <div key={item.id} className="p-4 flex gap-4">
                   <div className="relative w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden flex-shrink-0">
-                    <Image
+                    <StoreImage
                       src={item.product.image}
                       alt={item.product.name}
                       fill
@@ -242,6 +225,12 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
                 <span className="text-gray-500 dark:text-gray-400">Subtotal</span>
                 <span>{formatPrice(Number(order.subtotal), order.currency)}</span>
               </div>
+              {Number(order.discountAmount) > 0 && (
+                <div className="flex justify-between text-sm text-green-700 dark:text-green-400">
+                  <span>Discount</span>
+                  <span>-{formatPrice(Number(order.discountAmount), order.currency)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Shipping</span>
                 <span>{formatPrice(Number(order.shippingCost), order.currency)}</span>
@@ -254,6 +243,12 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
                 <span>Total</span>
                 <span>{formatPrice(Number(order.total), order.currency)}</span>
               </div>
+              {Number(order.refundedAmount) > 0 && (
+                <div className="flex justify-between text-sm text-gray-500 dark:text-gray-400">
+                  <span>Refunded</span>
+                  <span>-{formatPrice(Number(order.refundedAmount), order.currency)}</span>
+                </div>
+              )}
             </div>
           </div>
 

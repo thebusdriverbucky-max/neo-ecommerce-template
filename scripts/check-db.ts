@@ -2,7 +2,7 @@ import { db } from "../lib/db";
 
 async function main() {
   try {
-    // Проверь товары:
+    // Check products:
     const products = await db.product.findMany({
       select: {
         id: true,
@@ -34,7 +34,7 @@ async function main() {
     console.log("\n" + "=".repeat(80));
     console.log(`✅ Total: ${products.length} products\n`);
 
-    // Проверь пользователей:
+    // Check users:
     const users = await db.user.findMany({
       select: {
         id: true,
@@ -53,7 +53,7 @@ async function main() {
 
     console.log("=".repeat(80) + "\n");
 
-    // Проверь заказы:
+    // Check orders:
     const orders = await db.order.findMany({
       include: {
         items: {

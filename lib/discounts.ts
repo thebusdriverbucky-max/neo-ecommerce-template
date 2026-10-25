@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import { z } from "zod";
+import { resolveFreeShippingThreshold } from "@/lib/shipping";
 
 export const MAX_DISCOUNT_VALUE = 1_000_000;
 
@@ -135,13 +136,33 @@ export function calculateStorefrontTotals(
   const discountedSubtotal = round(subtotal.sub(discountAmount));
   const tax = round(discountedSubtotal.mul(settings?.taxRate ?? 0).div(100));
   const thresholdBase = shippingBasis === "subtotal" ? subtotal : discountedSubtotal;
-  const shipping = round(new Decimal(thresholdBase.gte(settings?.freeShippingThreshold ?? (shippingBasis === "subtotal" ? 0 : 500))
-    ? 0 : settings?.shippingCost ?? 0));
+  // "subtotal" keeps its historical semantics. The default "discounted" basis
+  // mirrors the server checkout: null disables free shipping, 0 frees every order.
+  const freeShippingThreshold = shippingBasis === "subtotal"
+    ? settings?.freeShippingThreshold ?? 0
+    : resolveFreeShippingThreshold(settings);
+  const qualifiesForFreeShipping = freeShippingThreshold !== null && thresholdBase.gte(freeShippingThreshold);
+  const shipping = round(new Decimal(qualifiesForFreeShipping ? 0 : settings?.shippingCost ?? 0));
   return {
     subtotal: subtotal.toNumber(), discountAmount, discountError,
     tax: tax.toNumber(), shipping: shipping.toNumber(),
     total: round(discountedSubtotal.add(tax).add(shipping)).toNumber(),
   };
+}
+
+/**
+ * "Free shipping from X" hint for the default (discounted) basis: only when a
+ * positive threshold exists and the current order is still below it while
+ * shipping is being charged.
+ */
+export function freeShippingHint(
+  settings: PricingSettings | null,
+  totals: { subtotal: number; discountAmount: number; shipping: number },
+): { threshold: number; remaining: number } | null {
+  const threshold = resolveFreeShippingThreshold(settings);
+  if (threshold === null || threshold <= 0 || totals.shipping <= 0) return null;
+  const remaining = new Decimal(threshold).sub(new Decimal(totals.subtotal).sub(totals.discountAmount));
+  return remaining.gt(0) ? { threshold, remaining: remaining.toNumber() } : null;
 }
 
 export function publicDiscount(discount: Discount & { code: string }) {

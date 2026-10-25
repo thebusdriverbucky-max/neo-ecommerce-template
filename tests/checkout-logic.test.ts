@@ -103,9 +103,24 @@ test("enforces order state transitions and terminal refund states", () => {
   assert.equal(canTransitionOrder("CONFIRMED", "PROCESSING", true), true);
   assert.equal(canTransitionOrder("PROCESSING", "SHIPPED", true), true);
   assert.equal(canTransitionOrder("SHIPPED", "DELIVERED", true), true);
+  // Optional steps can be skipped, but fulfilment never goes back.
+  assert.equal(canTransitionOrder("CONFIRMED", "SHIPPED", true), true);
+  assert.equal(canTransitionOrder("CONFIRMED", "DELIVERED", true), true);
+  assert.equal(canTransitionOrder("PROCESSING", "DELIVERED", true), true);
+  assert.equal(canTransitionOrder("SHIPPED", "PROCESSING", true), false);
+  assert.equal(canTransitionOrder("DELIVERED", "SHIPPED", true), false);
+  assert.equal(canTransitionOrder("SHIPPED", "CANCELLED", true), false);
   assert.equal(canTransitionOrder("DELIVERED", "CANCELLED", true), false);
-  assert.equal(isTerminalOrderStatus("PARTIALLY_REFUNDED"), true);
+  // Refund statuses come only from Stripe refunds.
+  assert.equal(canTransitionOrder("CONFIRMED", "REFUNDED", true), false);
+  assert.equal(canTransitionOrder("SHIPPED", "PARTIALLY_REFUNDED", true), false);
+  // The rest of a partially refunded order can still be shipped.
+  assert.equal(canTransitionOrder("PARTIALLY_REFUNDED", "SHIPPED", true), true);
+  assert.equal(canTransitionOrder("PARTIALLY_REFUNDED", "CANCELLED", true), false);
+  assert.equal(isTerminalOrderStatus("PARTIALLY_REFUNDED"), false);
   assert.equal(isTerminalOrderStatus("REFUNDED"), true);
+  assert.equal(isTerminalOrderStatus("CANCELLED"), true);
+  assert.equal(isTerminalOrderStatus("DELIVERED"), true);
 });
 
 test("accepts only the signed guest token stored for the order", () => {

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { COUNTRIES } from '@/lib/constants';
+import { toCountryCode } from '@/lib/shipping';
+import { availableCountries, filterCountries, resolveCountryInput, sanitizeCountryValue } from '@/lib/country-options';
 import { Input } from '@/components/ui/Input';
 
 interface CountrySelectProps {
@@ -9,29 +11,36 @@ interface CountrySelectProps {
   onChange: (value: string) => void;
   label: string;
   required?: boolean;
+  /** Country names (or ISO codes in older data) from the store settings. Empty allows all. */
   enabledCountries?: string[];
 }
 
+// Always emits an ISO code, or "" while the typed text is not a country the
+// customer actually picked, so a half-typed name can never be submitted.
 const CountrySelect = ({ value, onChange, label, required, enabledCountries = [] }: CountrySelectProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const enabledKey = enabledCountries.join('|');
 
-  const selectedCountry = COUNTRIES.find(c => c.code === value);
+  const selectedCountry = COUNTRIES.find(c => c.code === toCountryCode(value));
+
+  // A value that is a country name, or a country the store no longer ships to
+  // (e.g. restored from an earlier visit), is normalized or cleared.
+  useEffect(() => {
+    if (!value) return;
+    const sanitized = sanitizeCountryValue(value, enabledKey ? enabledKey.split('|') : []);
+    if (sanitized !== value) onChange(sanitized);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, enabledKey]);
 
   useEffect(() => {
     if (selectedCountry) {
-      setSearchTerm(selectedCountry.name);
+      setSearchTerm(current => current.trim().toLowerCase() === selectedCountry.name.toLowerCase() ? current : selectedCountry.name);
     }
   }, [selectedCountry]);
 
-  const availableCountries = enabledCountries.length > 0
-    ? COUNTRIES.filter(c => enabledCountries.includes(c.name) || enabledCountries.includes(c.code))
-    : COUNTRIES;
-
-  const filteredCountries = availableCountries.filter(country =>
-    country.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredCountries = filterCountries(availableCountries(enabledCountries), searchTerm);
 
   const handleSelect = (countryCode: string) => {
     onChange(countryCode);
@@ -42,22 +51,24 @@ const CountrySelect = ({ value, onChange, label, required, enabledCountries = []
     }
   };
 
+  const handleTyping = (text: string) => {
+    setSearchTerm(text);
+    if (!isOpen) setIsOpen(true);
+    const resolved = resolveCountryInput(text, enabledCountries);
+    if (resolved !== (value || '')) onChange(resolved);
+  };
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
         setIsOpen(false);
-        if (selectedCountry) {
-          setSearchTerm(selectedCountry.name);
-        } else {
-          setSearchTerm('');
-        }
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [wrapperRef, selectedCountry]);
+  }, [wrapperRef]);
 
 
   return (
@@ -67,10 +78,7 @@ const CountrySelect = ({ value, onChange, label, required, enabledCountries = []
         id="country-select"
         type="text"
         value={searchTerm}
-        onChange={(e) => {
-          setSearchTerm(e.target.value)
-          if (!isOpen) setIsOpen(true)
-        }}
+        onChange={(e) => handleTyping(e.target.value)}
         onFocus={() => setIsOpen(true)}
         required={required}
         autoComplete="off"

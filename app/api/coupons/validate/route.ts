@@ -1,6 +1,7 @@
 // app/api/coupons/validate/route.ts
 
 import { db } from "@/lib/db";
+import { getStoreSettings } from "@/lib/store-settings";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const error = discountAvailabilityError(coupon, new Date(), orderAmount);
     if (error) return NextResponse.json({ error }, { status: 400 });
-    const settings = await db.storeSettings.findFirst();
+    const settings = await getStoreSettings();
     const currency = settings?.currency || "USD";
     const discount = calculateDiscountAmount(orderAmount, coupon, currency);
     const finalAmount = new Decimal(orderAmount).toDecimalPlaces(moneyDecimals(currency), Decimal.ROUND_HALF_UP).sub(discount).toNumber();

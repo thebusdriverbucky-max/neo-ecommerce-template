@@ -88,6 +88,103 @@ a production store. Eligible paid plans may use a more frequent schedule. See
 [STRIPE_SETUP.md](./STRIPE_SETUP.md) for the exact event list, shared-account
 isolation, and acceptance checks.
 
+## Admin account
+
+The account whose email equals `ADMIN_EMAIL` becomes the admin when it signs
+in (the comparison ignores letter case and surrounding spaces). Register, or
+sign in with Google, using exactly that email **immediately after the first
+deploy**, so nobody else can claim it first.
+
+The admin role is re-checked against the database on every admin request:
+if the user is deleted, or is no longer an admin (its role was changed in the
+database and `ADMIN_EMAIL` was changed to a different address), the access
+ends without waiting for the 30-day session to expire. If someone else gained
+admin access to your store, contact support at
+[https://www.ownyourwebsite.app/contact](https://www.ownyourwebsite.app/contact)
+or support@ownyourwebsite.app and we will help you fix it in the Neon SQL
+Editor.
+
+## Store settings
+
+Store name, support email and currency are managed in **Admin -> Settings**.
+The old `NEXT_PUBLIC_STORE_NAME`, `STORE_SUPPORT_EMAIL` and
+`NEXT_PUBLIC_CURRENCY_SYMBOL` environment variables are no longer read; you can
+delete them from your deployment. Emails and prices use the store name from
+Settings and the currency stored on each order. Links inside emails use
+`NEXT_PUBLIC_APP_URL` (the legacy `NEXT_PUBLIC_STORE_URL` is still accepted as
+an alias); when neither is set, emails are sent without the "view order" button.
+
+### Free-shipping threshold
+
+In Admin -> Settings the free-shipping threshold has three modes:
+
+- **Disabled** - shipping is always charged.
+- **0** - every order ships for free.
+- **An amount** - orders at or above that amount (after discounts) ship for free.
+
+### Stripe minimum charge
+
+Stripe refuses card charges below a minimum per currency (for example 0.50 USD
+or 0.30 GBP). Checkout rejects a paid total below that minimum with a clear
+message instead of failing at Stripe. Free orders (total 0) are not affected.
+
+## Managing orders
+
+Open **Admin -> Orders** and press **Manage** on an order. One window shows the
+customer, the address, the items and the totals, and lets you move the order
+forward, add a tracking number, and cancel or refund it.
+
+| Status | Meaning |
+| --- | --- |
+| Pending payment | Checkout started; the customer has not paid yet. Stock is reserved. |
+| Confirmed | Paid. Stripe's webhook sets this automatically. |
+| Processing | Optional: you are packing the order. |
+| Shipped | Handed to the carrier. The customer gets an email with the tracking number. |
+| Delivered | The customer has the order and gets a delivery email. |
+| Cancelled | Closed without a payment; the reserved stock was returned. |
+| Partially refunded | Part of the payment was returned; the rest can still be shipped. |
+| Refunded | The whole payment was returned to the customer. |
+
+Fulfilment only moves forward, and Processing or Shipped can be skipped (for
+example straight to Delivered for in-store pickup).
+
+- **Unpaid orders** (Pending payment) and **free orders** (100% discount, not
+  shipped yet) are closed with **Cancel order**, which returns the stock.
+- **Paid orders are never "cancelled"**: press **Refund** instead. It returns
+  the remaining payment through Stripe and the order becomes Refunded. Before
+  the order ships you can also tick **Return the items to stock**. For a
+  partial refund use the Stripe Dashboard; the order updates automatically.
+
+## Product images
+
+Images uploaded with the built-in Cloudinary uploader are optimized
+automatically. Any other HTTPS image URL pasted into a product also works; it is
+loaded as-is, without optimization. To have another CDN optimized as well, add
+its host to `lib/image-hosts.json`:
+
+```json
+{ "protocol": "https", "hostname": "images.example.com" }
+```
+
+## Contact form
+
+Messages from the storefront contact form are emailed to the store email
+configured in Admin -> Settings (or `ADMIN_EMAIL` when it is empty), with the
+visitor's address set as Reply-To so you can answer directly. The form does
+**not** send an automatic reply or confirmation to the visitor, and a hidden
+honeypot field plus the rate limit protect it from bots.
+
+## Upgrading
+
+This release adds a database migration. `npm run build` applies it
+automatically (`prisma migrate deploy`), so no manual database step is needed.
+
+- Orders are now kept when a customer deletes their account: they are detached
+  from the account (the customer's email is stored on the order) so refunds and
+  accounting records stay intact.
+- Order numbers now come from an atomic per-year counter, which prevents
+  duplicate numbers under concurrent checkouts.
+
 ## License Configuration
 
 All configuration values (including `LICENSE_KEY`, `LICENSE_PRODUCT`, or any other license-related keys) will be sent directly to your email address immediately after purchase. Simply paste them into your environment variables when configuring the project!

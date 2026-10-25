@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { X } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
-import { calculateStorefrontTotals } from "@/lib/discounts";
+import { calculateStorefrontTotals, freeShippingHint } from "@/lib/discounts";
+import { belowMinimumNotice } from "@/lib/checkout-client";
 
 export function CartSummary() {
   const { items, discount, applyDiscount, removeDiscount } = useCart();
@@ -18,7 +19,9 @@ export function CartSummary() {
   const { settings } = useSettings();
 
   const { subtotal, discountAmount, discountError, tax, shipping, total: finalTotal } = calculateStorefrontTotals(items, discount, settings);
+  const shippingHint = freeShippingHint(settings, { subtotal, discountAmount, shipping });
   const currency = settings?.currency || "USD";
+  const minimum = belowMinimumNotice(finalTotal, currency);
   const taxRate = settings?.taxRate ?? 0;
 
   const handleApplyDiscount = async () => {
@@ -91,11 +94,21 @@ export function CartSummary() {
           <span>Shipping</span>
           <span>{formatPrice(shipping, currency)}</span>
         </div>
+        {shippingHint && (
+          <p className="text-xs text-gray-600 dark:text-gray-300">
+            Free shipping from {formatPrice(shippingHint.threshold, currency)}
+          </p>
+        )}
       </div>
       <div className="flex justify-between text-xl font-bold mb-4">
         <span>Total</span>
         <span>{formatPrice(finalTotal, currency)}</span>
       </div>
+      {minimum && (
+        <p role="alert" className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3 mb-4">
+          Minimum order amount for card payments is {formatPrice(minimum.minimumMajor, currency)}.
+        </p>
+      )}
       <Link
         href="/checkout"
         className="w-full block text-center bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700"

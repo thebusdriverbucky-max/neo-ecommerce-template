@@ -28,7 +28,7 @@ test("confirmed checkout reconciles the persisted cart exactly once; unpaid retu
     useCart.getState().rememberCheckout("order-1", purchased);
     // Checkout snapshot survives redirect/reload and does not clear before payment.
     await useCart.persist.rehydrate();
-    assert.deepEqual(useCart.getState().pendingCheckouts["order-1"], purchased);
+    assert.deepEqual(useCart.getState().pendingCheckouts["order-1"].items, purchased);
     assert.equal(useCart.getState().items[0].quantity, 2);
 
     const { createRoot } = await import("react-dom/client");

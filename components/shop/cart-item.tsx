@@ -3,7 +3,7 @@
 "use client";
 
 import { CartItem as CartItemType, useCart } from "@/lib/cart-store";
-import Image from "next/image";
+import { StoreImage } from "@/components/ui/StoreImage";
 import { Trash2, Plus, Minus } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
 import { CldImage } from 'next-cloudinary';
@@ -21,10 +21,11 @@ export function CartItem({ item }: CartItemProps) {
     <div className="flex gap-4 p-4 border border-gray-200 rounded-lg mb-4">
       <div className="relative h-24 w-24">
         {item.image.startsWith('http') ? (
-          <Image
+          <StoreImage
             src={item.image}
             alt={item.name}
             fill
+            sizes="96px"
             className="object-cover rounded"
           />
         ) : (

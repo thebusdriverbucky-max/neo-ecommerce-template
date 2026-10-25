@@ -1,4 +1,4 @@
-// components/layout/CookieBanner.tsx (ИСПРАВЛЕННАЯ ВЕРСИЯ)
+// components/layout/CookieBanner.tsx
 
 'use client';
 
@@ -16,7 +16,7 @@ export function CookieBanner() {
 
   const handleAcceptAll = () => {
     localStorage.setItem('cookie-consent', 'all');
-    // Здесь можно инициализировать Google Analytics, если подключен
+    // Google Analytics can be initialized here, if connected
     setShowBanner(false);
   };
 

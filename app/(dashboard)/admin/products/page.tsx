@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/Textarea";
 import { Select } from "@/components/ui/Select";
 import { Plus } from "lucide-react";
 import ProductsTable from "@/components/admin/ProductsTable";
+import Pagination from "@/components/admin/Pagination";
 import { ProductImageUpload } from "@/components/admin/product-image-upload";
 import { productSchema, productImageSchema } from "@/lib/validations";
 import { productFieldErrors } from "@/lib/product-feedback";
@@ -34,10 +35,20 @@ interface Product {
   currency: string;
 }
 
+const PRODUCTS_PER_PAGE = 20;
+
 export default function AdminProductsPage() {
   const { data: session, status: sessionStatus } = useSession();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [removing, setRemoving] = useState(false);
+  const removingRef = useRef(false);
+  const [deleteError, setDeleteError] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -70,12 +81,41 @@ export default function AdminProductsPage() {
     }
   }, [formData, editingId, dialogOpen]);
 
-  useEffect(() => {
-    if (session?.user?.role === "ADMIN") {
-      fetchProducts();
-      fetchSettings();
+  const isAdmin = session?.user?.role === "ADMIN";
+
+  const fetchProducts = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const params = new URLSearchParams({ all: "true", page: String(page), pageSize: String(PRODUCTS_PER_PAGE) });
+      if (searchQuery) params.set("search", searchQuery);
+      const response = await fetch(`/api/products?${params}`);
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || !Array.isArray(data.products)) {
+        throw new Error(data?.error || "Invalid product list");
+      }
+      const lastPage = Math.max(1, Math.ceil(data.total / PRODUCTS_PER_PAGE));
+      if (data.products.length === 0 && data.total > 0 && page > lastPage) {
+        setPage(lastPage);
+        return;
+      }
+      setProducts(data.products);
+      setTotal(data.total);
+      setListError("");
+    } catch {
+      setListError("Could not load products. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-  }, [session?.user?.role]);
+  }, [page, searchQuery]);
+
+  useEffect(() => {
+    if (isAdmin) fetchProducts();
+  }, [isAdmin, fetchProducts]);
+
+  useEffect(() => {
+    if (isAdmin) fetchSettings();
+  }, [isAdmin]);
 
   const fetchSettings = async () => {
     try {
@@ -85,20 +125,6 @@ export default function AdminProductsPage() {
         setEnabledCategories(data.enabledCategories);
       }
     } catch { /* Keep the built-in categories if settings are temporarily unavailable. */ }
-  };
-
-  const fetchProducts = async () => {
-    try {
-      const response = await fetch("/api/products?all=true");
-      const data = await response.json();
-      if (!response.ok || !Array.isArray(data)) throw new Error("Invalid product list");
-      setProducts(data);
-      setListError("");
-    } catch {
-      setListError("Could not load products. Refresh the page to retry.");
-    } finally {
-      setLoading(false);
-    }
   };
 
   const handleSubmit = async (restore = false) => {
@@ -141,41 +167,37 @@ export default function AdminProductsPage() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteId) return;
-
+  // Hard delete and archive share one request/feedback path.
+  const removeProduct = async (hard: boolean) => {
+    if (!deleteId || removingRef.current) return;
+    removingRef.current = true;
+    setRemoving(true);
+    setDeleteError("");
     try {
-      const response = await fetch(`/api/products/${deleteId}?hard=true`, {
+      const response = await fetch(`/api/products/${deleteId}${hard ? "?hard=true" : ""}`, {
         method: "DELETE",
       });
-
-      if (response.ok) {
-        await fetchProducts();
-        setDeleteDialogOpen(false);
-        setDeleteId(null);
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        setDeleteError(
+          result?.error || `Could not ${hard ? "delete" : "archive"} the product (HTTP ${response.status}). Please try again.`
+        );
+        return;
       }
-    } catch (error) {
-      console.error("Failed to delete product:", error);
+      setNotice(hard ? "Product deleted permanently." : "Product archived. It is hidden from the store and kept in order history.");
+      setDeleteDialogOpen(false);
+      setDeleteId(null);
+      await fetchProducts();
+    } catch {
+      setDeleteError("Could not reach the server. Check your connection and try again.");
+    } finally {
+      removingRef.current = false;
+      setRemoving(false);
     }
   };
 
-  const handleArchive = async () => {
-    if (!deleteId) return;
-
-    try {
-      const response = await fetch(`/api/products/${deleteId}`, {
-        method: "DELETE",
-      });
-
-      if (response.ok) {
-        await fetchProducts();
-        setDeleteDialogOpen(false);
-        setDeleteId(null);
-      }
-    } catch (error) {
-      console.error("Failed to archive product:", error);
-    }
-  };
+  const handleDelete = () => removeProduct(true);
+  const handleArchive = () => removeProduct(false);
 
   const handleEdit = (product: Product) => {
     setFieldErrors({});
@@ -199,6 +221,8 @@ export default function AdminProductsPage() {
 
   const handleDeleteClick = (id: string) => {
     setDeleteId(id);
+    setDeleteError("");
+    setNotice("");
     setDeleteDialogOpen(true);
   };
 
@@ -250,6 +274,8 @@ export default function AdminProductsPage() {
 
   if (sessionStatus !== "loading" && session?.user?.role !== "ADMIN") redirect("/");
 
+  const totalPages = Math.max(1, Math.ceil(total / PRODUCTS_PER_PAGE));
+
   if (loading || sessionStatus === "loading") {
     return <div className="text-center py-12">Loading...</div>;
   }
@@ -273,12 +299,50 @@ export default function AdminProductsPage() {
         ← Scroll left/right to see all actions →
       </p>
 
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          setPage(1);
+          setSearchQuery(searchInput.trim());
+        }}
+        className="mb-6 flex gap-3 items-end"
+      >
+        <div className="flex-1">
+          <Input
+            label="Search"
+            name="productSearch"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search by name or slug (archived products included)"
+          />
+        </div>
+        <Button type="submit" variant="outline">
+          Search
+        </Button>
+      </form>
+
       {notice && <p role="status" className="mb-4 text-green-700">{notice}</p>}
-      {listError && <p role="alert" className="mb-4 text-red-600">{listError}</p>}
-      <ProductsTable
-        products={products}
-        onEdit={handleEdit}
-        onDelete={handleDeleteClick}
+      {listError && (
+        <div role="alert" className="mb-4 flex items-center gap-3 text-red-600">
+          <span>{listError}</span>
+          <Button variant="outline" size="sm" onClick={() => void fetchProducts()}>
+            Retry
+          </Button>
+        </div>
+      )}
+      <div className={refreshing ? "opacity-60 transition-opacity" : "transition-opacity"}>
+        <ProductsTable
+          products={products}
+          onEdit={handleEdit}
+          onDelete={handleDeleteClick}
+        />
+      </div>
+      <Pagination
+        page={page}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        disabled={refreshing}
+        summary={`${total} products`}
       />
 
       {/* Add/Edit Modal */}
@@ -364,6 +428,10 @@ export default function AdminProductsPage() {
           {/* Main Image */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Main Product Image</label>
+            <p className="text-xs text-gray-500">
+              Cloudinary uploads are optimized automatically. Any other HTTPS image URL also works; it is
+              shown as-is, without optimization.
+            </p>
             <div className="flex gap-2">
               <Input
                 placeholder="Main Image URL"
@@ -467,19 +535,25 @@ export default function AdminProductsPage() {
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!removingRef.current) setDeleteDialogOpen(open);
+        }}
         title="Delete Product"
-        description="Are you sure you want to delete this product? This action cannot be undone. The product will disappear from users' order history and the admin panel. Maybe you want to archive it instead? It won't be displayed in the store but will remain in the history."
+        description="Delete this product permanently? This cannot be undone. A product that appears in any order cannot be deleted. Archive it instead: it is hidden from the store and stays in order history."
         onConfirm={handleDelete}
+        closeOnConfirm={false}
+        isLoading={removing}
         confirmText="Delete"
         cancelText="Cancel"
         isDangerous={true}
         extraAction={
-          <Button variant="outline" onClick={handleArchive}>
+          <Button variant="outline" disabled={removing} onClick={handleArchive}>
             Archive
           </Button>
         }
-      />
+      >
+        {deleteError && <p role="alert" className="text-sm text-red-600">{deleteError}</p>}
+      </Dialog>
     </div>
   );
 }

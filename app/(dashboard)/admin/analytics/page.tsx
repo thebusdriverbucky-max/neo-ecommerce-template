@@ -16,34 +16,46 @@ import {
   BarChart,
   Bar,
 } from "recharts";
+import { formatPrice } from "@/lib/utils";
+import { ORDER_STATUSES, orderStatusLabel } from "@/lib/admin-orders";
 
 interface Analytics {
-  totalOrders: number;
-  totalRevenue: number;
-  totalProducts: number;
-  recentOrders: number;
+  currency: string;
+  grossSales: number;
+  refunds: number;
+  netRevenue: number;
+  paidOrders: number;
   avgOrderValue: number;
-  pendingOrders: number;
-  confirmedOrders: number;
-  revenueByDate: Record<string, number>;
+  otherCurrencyPaidOrders: number;
+  ordersByStatus: Record<string, number>;
+  dailyRevenue: Array<{ date: string; revenue: number }>;
+  totalOrders: number;
+  recentOrders: number;
+  totalProducts: number;
 }
 
+const EMPTY_ANALYTICS: Analytics = {
+  currency: "USD",
+  grossSales: 0,
+  refunds: 0,
+  netRevenue: 0,
+  paidOrders: 0,
+  avgOrderValue: 0,
+  otherCurrencyPaidOrders: 0,
+  ordersByStatus: {},
+  dailyRevenue: [],
+  totalOrders: 0,
+  recentOrders: 0,
+  totalProducts: 0,
+};
+
 export default function AdminAnalyticsPage() {
-  const { data: session } = useSession();
-  const [analytics, setAnalytics] = useState<Analytics>({
-    totalOrders: 0,
-    totalRevenue: 0,
-    totalProducts: 0,
-    recentOrders: 0,
-    avgOrderValue: 0,
-    pendingOrders: 0,
-    confirmedOrders: 0,
-    revenueByDate: {},
-  });
+  const { data: session, status: sessionStatus } = useSession();
+  const [analytics, setAnalytics] = useState<Analytics>(EMPTY_ANALYTICS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  if (session?.user?.role !== "ADMIN") {
+  if (sessionStatus !== "loading" && session?.user?.role !== "ADMIN") {
     redirect("/");
   }
 
@@ -60,7 +72,7 @@ export default function AdminAnalyticsPage() {
           : "Failed to fetch analytics");
       }
 
-      setAnalytics(data as Analytics);
+      setAnalytics({ ...EMPTY_ANALYTICS, ...(data as Partial<Analytics>) });
     } catch (error) {
       console.error("Failed to fetch analytics:", error);
       setError(error instanceof Error ? error.message : "Failed to fetch analytics");
@@ -73,7 +85,7 @@ export default function AdminAnalyticsPage() {
     fetchAnalytics();
   }, [fetchAnalytics]);
 
-  if (loading) {
+  if (loading || sessionStatus === "loading") {
     return <div className="text-center py-12">Loading...</div>;
   }
 
@@ -101,10 +113,21 @@ export default function AdminAnalyticsPage() {
     );
   }
 
-  const chartData = Object.entries(analytics.revenueByDate || {}).map(([date, revenue]) => ({
-    name: date,
+  const currency = analytics.currency;
+  const money = (value: number) => formatPrice(value, currency);
+  const chartData = (analytics.dailyRevenue || []).map(({ date, revenue }) => ({
+    name: date.slice(5),
+    date,
     sales: revenue,
   }));
+  const hasSales = chartData.some((entry) => entry.sales !== 0);
+  const statusEntries = ORDER_STATUSES.map((status) => ({
+    status,
+    count: analytics.ordersByStatus?.[status] ?? 0,
+  })).filter((entry) => entry.count > 0);
+
+  const card = "bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6";
+  const cardLabel = "text-sm text-gray-500 dark:text-gray-400 uppercase mb-2";
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -112,54 +135,77 @@ export default function AdminAnalyticsPage() {
         Store <span className="text-primary">Analytics</span>
       </h1>
 
+      {analytics.otherCurrencyPaidOrders > 0 && (
+        <p role="status" className="mb-6 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-800">
+          {analytics.otherCurrencyPaidOrders} paid order(s) were placed in a currency other than {currency} and are
+          not included in the amounts below.
+        </p>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Total Orders Card */}
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
-          <p className="text-sm text-gray-500 dark:text-gray-400 uppercase mb-2">
-            Total Orders
+        <div className={card}>
+          <p className={cardLabel}>Net Revenue</p>
+          <p className="text-3xl font-bold">{money(analytics.netRevenue)}</p>
+          <p className="text-xs text-gray-400 mt-2">Paid sales minus refunds</p>
+        </div>
+
+        <div className={card}>
+          <p className={cardLabel}>Gross Sales</p>
+          <p className="text-3xl font-bold">{money(analytics.grossSales)}</p>
+          <p className="text-xs text-gray-400 mt-2">{analytics.paidOrders} paid orders</p>
+        </div>
+
+        <div className={card}>
+          <p className={cardLabel}>Refunds</p>
+          <p className="text-3xl font-bold">{money(analytics.refunds)}</p>
+          <p className="text-xs text-gray-400 mt-2">
+            {(analytics.ordersByStatus?.PARTIALLY_REFUNDED ?? 0) + (analytics.ordersByStatus?.REFUNDED ?? 0)} refunded
+            orders
           </p>
+        </div>
+
+        <div className={card}>
+          <p className={cardLabel}>Avg Order Value</p>
+          <p className="text-3xl font-bold">{money(analytics.avgOrderValue)}</p>
+          <p className="text-xs text-gray-400 mt-2">Gross sales per paid order</p>
+        </div>
+
+        <div className={card}>
+          <p className={cardLabel}>Total Orders</p>
           <p className="text-3xl font-bold">{analytics.totalOrders}</p>
-          <p className="text-xs text-gray-400 mt-2">
-            {analytics.recentOrders} in last 30 days
-          </p>
+          <p className="text-xs text-gray-400 mt-2">{analytics.recentOrders} in last 30 days</p>
         </div>
 
-        {/* Total Revenue Card */}
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
-          <p className="text-sm text-gray-500 dark:text-gray-400 uppercase mb-2">
-            Total Revenue
-          </p>
-          <p className="text-3xl font-bold">${analytics.totalRevenue.toFixed(2)}</p>
-          <p className="text-xs text-gray-400 mt-2">Lifetime revenue</p>
-        </div>
-
-        {/* Total Products Card */}
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
-          <p className="text-sm text-gray-500 dark:text-gray-400 uppercase mb-2">
-            Total Products
-          </p>
+        <div className={card}>
+          <p className={cardLabel}>Total Products</p>
           <p className="text-3xl font-bold">{analytics.totalProducts}</p>
-          <p className="text-xs text-gray-400 mt-2">In catalog</p>
+          <p className="text-xs text-gray-400 mt-2">Active in catalog</p>
         </div>
 
-        {/* Avg Order Value Card */}
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
-          <p className="text-sm text-gray-500 dark:text-gray-400 uppercase mb-2">
-            Avg Order Value
-          </p>
-          <p className="text-3xl font-bold">${analytics.avgOrderValue.toFixed(2)}</p>
-          <p className="text-xs text-gray-400 mt-2">
-            {analytics.pendingOrders} pending, {analytics.confirmedOrders} confirmed
-          </p>
+        <div className={`${card} md:col-span-2`}>
+          <p className={cardLabel}>Orders by Status</p>
+          {statusEntries.length > 0 ? (
+            <ul className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+              {statusEntries.map(({ status, count }) => (
+                <li key={status} className="flex justify-between">
+                  <span>{orderStatusLabel(status)}</span>
+                  <span className="font-semibold">{count}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-gray-500">No orders yet</p>
+          )}
         </div>
       </div>
 
       {/* Charts */}
       <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
-          <h2 className="text-lg font-semibold mb-4">Sales Trend</h2>
+        <div className={card}>
+          <h2 className="text-lg font-semibold mb-1">Sales Trend</h2>
+          <p className="text-xs text-gray-400 mb-4">Net revenue per day, last 30 days (UTC)</p>
           <div className="h-64">
-            {chartData.length > 0 ? (
+            {hasSales ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={chartData}
@@ -173,7 +219,10 @@ export default function AdminAnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip />
+                  <Tooltip
+                    labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ?? _label}
+                    formatter={(value) => [money(Number(value)), "Net revenue"]}
+                  />
                   <Line
                     type="monotone"
                     dataKey="sales"
@@ -184,16 +233,17 @@ export default function AdminAnalyticsPage() {
               </ResponsiveContainer>
             ) : (
               <div className="flex items-center justify-center h-full text-gray-500">
-                No data available
+                No sales in the last 30 days
               </div>
             )}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
-          <h2 className="text-lg font-semibold mb-4">Daily Revenue</h2>
+        <div className={card}>
+          <h2 className="text-lg font-semibold mb-1">Daily Revenue</h2>
+          <p className="text-xs text-gray-400 mb-4">Net revenue per day, last 30 days (UTC)</p>
           <div className="h-64">
-            {chartData.length > 0 ? (
+            {hasSales ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={chartData}
@@ -207,13 +257,16 @@ export default function AdminAnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip />
+                  <Tooltip
+                    labelFormatter={(_label, payload) => payload?.[0]?.payload?.date ?? _label}
+                    formatter={(value) => [money(Number(value)), "Net revenue"]}
+                  />
                   <Bar dataKey="sales" fill="#82ca9d" />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
               <div className="flex items-center justify-center h-full text-gray-500">
-                No data available
+                No sales in the last 30 days
               </div>
             )}
           </div>

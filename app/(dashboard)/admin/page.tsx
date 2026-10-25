@@ -1,5 +1,5 @@
 // app/(dashboard)/admin/page.tsx
-import { auth } from "@/lib/auth"; // Импортируем auth из вашей конфигурации
+import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Package, ShoppingCart, BarChart3, Ticket } from "lucide-react";
@@ -7,7 +7,7 @@ import { Package, ShoppingCart, BarChart3, Ticket } from "lucide-react";
 export const dynamic = 'force-dynamic';
 
 export default async function AdminDashboard() {
-  const session = await auth(); // Используем auth() вместо getServerSession
+  const session = await auth();
 
   if (session?.user?.role !== "ADMIN") {
     redirect("/");

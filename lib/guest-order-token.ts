@@ -1,6 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Guest order links are sent in confirmation emails and must stay usable for
+// the whole shipping and returns window. Existing orders keep their stored expiry.
+const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 function getSecret(): string {
   const secret = process.env.GUEST_ORDER_TOKEN_SECRET || process.env.NEXTAUTH_SECRET;

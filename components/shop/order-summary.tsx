@@ -4,12 +4,14 @@
 
 import { CartItem, useCart } from "@/lib/cart-store";
 import { formatPrice } from "@/lib/utils";
-import Image from "next/image";
+import { StoreImage } from "@/components/ui/StoreImage";
+import { CldImage } from "next-cloudinary";
 import { CouponInput } from "./coupon-input";
 import { Button } from "@/components/ui/Button";
 import { X } from "lucide-react";
 import { useSettings } from "@/components/providers/settings-provider";
-import { calculateStorefrontTotals } from "@/lib/discounts";
+import { calculateStorefrontTotals, freeShippingHint } from "@/lib/discounts";
+import { belowMinimumNotice } from "@/lib/checkout-client";
 
 interface OrderSummaryProps {
   items: CartItem[];
@@ -20,6 +22,9 @@ export function OrderSummary({ items }: OrderSummaryProps) {
   const { settings } = useSettings();
 
   const { subtotal, discountAmount, discountError, tax, shipping, total } = calculateStorefrontTotals(items, discount, settings);
+  const shippingHint = freeShippingHint(settings, { subtotal, discountAmount, shipping });
+  const currency = settings?.currency || "USD";
+  const minimum = belowMinimumNotice(total, currency);
 
   return (
     <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg">
@@ -28,12 +33,23 @@ export function OrderSummary({ items }: OrderSummaryProps) {
         {items.map((item) => (
           <div key={item.productId} className="flex gap-3">
             <div className="relative h-12 w-12">
-              <Image
-                src={item.image}
-                alt={item.name}
-                fill
-                className="object-cover rounded"
-              />
+              {item.image.startsWith("http") ? (
+                <StoreImage
+                  src={item.image}
+                  alt={item.name}
+                  fill
+                  sizes="48px"
+                  className="object-cover rounded"
+                />
+              ) : (
+                <CldImage
+                  src={item.image}
+                  alt={item.name}
+                  fill
+                  crop={{ type: "thumb", source: true }}
+                  className="object-cover rounded"
+                />
+              )}
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium">{item.name}</p>
@@ -98,10 +114,20 @@ export function OrderSummary({ items }: OrderSummaryProps) {
           <span>Shipping</span>
           <span>{formatPrice(shipping, settings?.currency)}</span>
         </div>
+        {shippingHint && (
+          <p className="text-xs text-gray-600 dark:text-gray-300">
+            Free shipping from {formatPrice(shippingHint.threshold, settings?.currency)}
+          </p>
+        )}
         <div className="flex justify-between text-lg font-bold border-t pt-2">
           <span>Total</span>
           <span>{formatPrice(total, settings?.currency)}</span>
         </div>
+        {minimum && (
+          <p role="alert" className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-3">
+            Minimum order amount for card payments is {formatPrice(minimum.minimumMajor, currency)}.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -11,7 +11,7 @@ export function ProfileActions() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const handleDelete = async () => {
-    if (window.confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
+    if (window.confirm("Are you sure you want to delete your account? Your profile, addresses, reviews and wishlist will be permanently removed. Your past orders are kept for the store's records and can no longer be viewed from an account. This action cannot be undone.")) {
       setIsDeleting(true);
       try {
         await deleteAccount();

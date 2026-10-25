@@ -264,7 +264,7 @@ async function main() {
       );
     }
 
-    // Очистка в правильном порядке
+    // Clear data in the correct order
     await db.review.deleteMany({});
     await db.wishlist.deleteMany({});
     await db.inventoryAlert.deleteMany({});
@@ -274,7 +274,7 @@ async function main() {
 
     console.log("✓ Cleared existing data");
 
-    // Создание продуктов
+    // Create products
     for (const product of products) {
       await db.product.create({
         data: { ...product, price: parseFloat(product.price.toString()) },

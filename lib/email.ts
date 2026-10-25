@@ -1,23 +1,30 @@
 import { Resend } from "resend";
 import {
+  buildOrderEmailView,
+  displayOrderNumber,
   getLowStockAlertEmailHtml,
   getNewOrderNotificationEmailHtml,
   getOrderConfirmationEmailHtml,
   getOrderStatusUpdateEmailHtml,
+  getPaidCancelledOrderAlertEmailHtml,
   getPasswordResetEmailHtml,
 } from "./email-templates";
+import { createGuestOrderToken } from "./guest-order-token";
+import { headerText } from "./html";
+import { logger } from "./logger";
 import {
+  adminNotificationEmail,
+  storeDisplayName,
+  storeSupportEmail,
+} from "./store-settings";
+import { formatPrice } from "./utils";
+import type {
+  Address,
   Order,
   OrderItem,
   Product,
-  Address,
   StoreSettings,
 } from "@prisma/client";
-
-type OrderWithDetails = Order & {
-  items: (OrderItem & { product: Product })[];
-  shippingAddress: Address | null;
-};
 
 const EMAIL_FROM = process.env.EMAIL_FROM || "onboarding@resend.dev";
 
@@ -37,16 +44,27 @@ type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  /** Address that receives replies (e.g. the contact form submitter). */
+  replyTo?: string;
 };
 
 export const sendEmail = async (data: EmailPayload) => {
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
-    console.log("⚠️ RESEND_API_KEY not set. Logging email to console.");
-    console.log("📧 [MOCK EMAIL] To:", data.to);
-    console.log("Subject:", data.subject);
-    console.log("HTML:", data.html);
+    if (process.env.NODE_ENV === "production") {
+      // Never log the body here: it can contain password-reset links, guest
+      // order tokens and customer addresses.
+      console.warn(
+        `RESEND_API_KEY not set. Email not sent (subject: ${headerText(data.subject)}).`,
+      );
+    } else {
+      console.log("⚠️ RESEND_API_KEY not set. Logging email to console.");
+      console.log("📧 [MOCK EMAIL] To:", data.to);
+      if (data.replyTo) console.log("Reply-To:", data.replyTo);
+      console.log("Subject:", data.subject);
+      console.log("HTML:", data.html);
+    }
     return { id: "mock-id" };
   }
 
@@ -55,8 +73,9 @@ export const sendEmail = async (data: EmailPayload) => {
     const { data: emailData, error } = await resend.emails.send({
       from: EMAIL_FROM,
       to: data.to,
-      subject: data.subject,
+      subject: headerText(data.subject),
       html: data.html,
+      ...(data.replyTo ? { replyTo: data.replyTo } : {}),
     });
 
     if (error) {
@@ -72,100 +91,40 @@ export const sendEmail = async (data: EmailPayload) => {
   }
 };
 
-export const sendOrderConfirmationEmail = async (
-  userEmail: string,
-  orderData: {
-    orderNumber: string;
-    orderId: string;
-    total: number;
-    subtotal?: number;
-    tax?: number;
-    shippingCost?: number;
-    storeName?: string;
-    currencySymbol?: string;
-    guestAccessToken?: string;
-    items: { name: string; qty: number; price: number }[];
-  },
-) => {
-  const storeName =
-    orderData.storeName || process.env.NEXT_PUBLIC_STORE_NAME || "Store";
-  const supportEmail = process.env.STORE_SUPPORT_EMAIL || "support@example.com";
-  const storeUrl = process.env.NEXT_PUBLIC_STORE_URL || "";
-  const currencySymbol =
-    orderData.currencySymbol || process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || "$";
+/**
+ * Public base URL used for links in emails. NEXT_PUBLIC_APP_URL is the
+ * canonical setting; NEXT_PUBLIC_STORE_URL is a legacy alias. Returns null
+ * when neither is a usable http(s) URL.
+ */
+export function getAppBaseUrl(): string | null {
+  const raw = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_STORE_URL || "").trim();
+  if (!/^https?:\/\/[^\s]+$/i.test(raw)) return null;
+  return raw.replace(/\/+$/, "");
+}
 
-  const html = getOrderConfirmationEmailHtml({
-    orderNumber: orderData.orderNumber,
-    orderId: orderData.orderId,
-    total: orderData.total,
-    subtotal: orderData.subtotal,
-    tax: orderData.tax,
-    shippingCost: orderData.shippingCost,
-    items: orderData.items,
-    storeName,
-    supportEmail,
-    storeUrl,
-    currencySymbol,
-    guestAccessToken: orderData.guestAccessToken,
-  });
+function orderLink(order: Pick<Order, "id" | "userId" | "guestAccessTokenExpiresAt">): string | null {
+  const base = getAppBaseUrl();
+  if (!base) return null;
 
-  return sendEmail({
-    to: userEmail,
-    subject: `Order Confirmation ${orderData.orderNumber}`,
-    html,
-  });
-};
+  const url = `${base}/orders/${encodeURIComponent(order.id)}`;
+  if (order.userId) return url;
 
-export const sendOrderStatusUpdateEmail = async (
-  userEmail: string,
-  orderId: string,
-  status: string,
-  trackingNumber?: string | null,
-) => {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "Store";
-  const html = getOrderStatusUpdateEmailHtml(
-    orderId,
-    status,
-    storeName,
-    trackingNumber,
-  );
-
-  return sendEmail({
-    to: userEmail,
-    subject: `Order Status Update #${orderId.slice(0, 8)}`,
-    html,
-  });
-};
-
-export const sendNewOrderNotificationEmail = async (
-  order: OrderWithDetails,
-  storeSettings: StoreSettings & { storeEmail: string },
-) => {
-  if (!storeSettings.storeEmail) {
-    console.log("⚠️ Store email not set. Skipping new order notification.");
-    return;
+  // Guests can only open their order with a signed token.
+  const expiresAt = order.guestAccessTokenExpiresAt;
+  if (!expiresAt || expiresAt.getTime() <= Date.now()) return null;
+  try {
+    return `${url}?guest_token=${encodeURIComponent(createGuestOrderToken(order.id, expiresAt))}`;
+  } catch {
+    return null;
   }
-
-  const currencySymbol = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || "$";
-  const html = getNewOrderNotificationEmailHtml(
-    order,
-    storeSettings,
-    currencySymbol,
-  );
-
-  return sendEmail({
-    to: storeSettings.storeEmail,
-    subject: `New Order Received! ${order.orderNumber}`,
-    html,
-  });
-};
+}
 
 export const sendPasswordResetEmail = async (
   userEmail: string,
   resetLink: string,
+  settings: StoreSettings | null = null,
 ) => {
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "Store";
-  const html = getPasswordResetEmailHtml(resetLink, storeName);
+  const html = getPasswordResetEmailHtml(resetLink, storeDisplayName(settings));
 
   return sendEmail({
     to: userEmail,
@@ -174,20 +133,130 @@ export const sendPasswordResetEmail = async (
   });
 };
 
-export const sendLowStockAlert = async (
+// ---------------------------------------------------------------------------
+// Integration contract. Callers in the payment flow use only these functions.
+// ---------------------------------------------------------------------------
+
+export type OrderEmailDetails = Order & {
+  user: { email: string } | null;
+  items: (OrderItem & { product: Pick<Product, "name"> })[];
+  shippingAddress: Address | null;
+};
+
+export type OrderStatusEmailDetails = Pick<
+  Order,
+  "id" | "orderNumber" | "status" | "trackingNumber" | "userId" | "guestAccessTokenExpiresAt"
+>;
+
+/** Customer confirmation + admin "new order" notification for a paid order. */
+export async function sendOrderPlacedEmails(
+  order: OrderEmailDetails,
+  settings: StoreSettings | null,
+): Promise<void> {
+  const storeName = storeDisplayName(settings);
+  const view = buildOrderEmailView(order);
+  const customerEmail = order.user?.email ?? order.guestEmail ?? null;
+
+  if (customerEmail) {
+    try {
+      await sendEmail({
+        to: customerEmail,
+        subject: `Order Confirmation ${view.orderNumber}`,
+        html: getOrderConfirmationEmailHtml({
+          order: view,
+          storeName,
+          supportEmail: storeSupportEmail(settings),
+          orderUrl: orderLink(order),
+        }),
+      });
+    } catch {
+      logger.error("Failed to send order confirmation email", { orderId: order.id });
+    }
+  }
+
+  const adminEmail = adminNotificationEmail(settings);
+  if (!adminEmail) {
+    logger.warn("No store email or ADMIN_EMAIL configured; new order notification skipped", {
+      orderId: order.id,
+    });
+    return;
+  }
+
+  try {
+    await sendEmail({
+      to: adminEmail,
+      subject: `New Order Received! ${view.orderNumber}`,
+      html: getNewOrderNotificationEmailHtml({ order: view, storeName, customerEmail }),
+    });
+  } catch {
+    logger.error("Failed to send new order notification", { orderId: order.id });
+  }
+}
+
+export async function sendOrderStatusEmail(
+  to: string,
+  order: OrderStatusEmailDetails,
+  settings: StoreSettings | null,
+): Promise<void> {
+  const orderNumber = displayOrderNumber(order);
+
+  await sendEmail({
+    to,
+    subject: `Order Status Update ${orderNumber}`,
+    html: getOrderStatusUpdateEmailHtml({
+      orderNumber,
+      status: order.status,
+      trackingNumber: order.trackingNumber,
+      storeName: storeDisplayName(settings),
+      supportEmail: storeSupportEmail(settings),
+      orderUrl: orderLink(order),
+    }),
+  });
+}
+
+/** Alerts the admin that a payment arrived for an order that was cancelled. */
+export async function sendPaidCancelledOrderAlert(
+  order: Pick<Order, "id" | "orderNumber" | "total" | "currency">,
+  details: { paymentIntentId: string | null; refundId: string | null; refundError?: string },
+  settings: StoreSettings | null,
+): Promise<void> {
+  const adminEmail = adminNotificationEmail(settings);
+  if (!adminEmail) {
+    logger.warn("No store email or ADMIN_EMAIL configured; cancelled-order payment alert skipped", {
+      orderId: order.id,
+    });
+    return;
+  }
+
+  const orderNumber = displayOrderNumber(order);
+  await sendEmail({
+    to: adminEmail,
+    subject: `Action needed: payment for cancelled order ${orderNumber}`,
+    html: getPaidCancelledOrderAlertEmailHtml({
+      orderNumber,
+      total: formatPrice(Number(String(order.total)), order.currency || "USD"),
+      paymentIntentId: details.paymentIntentId,
+      refundId: details.refundId,
+      refundError: details.refundError,
+      storeName: storeDisplayName(settings),
+    }),
+  });
+}
+
+export async function sendLowStockEmail(
   productName: string,
   currentStock: number,
-) => {
-  // In a real app, you'd probably fetch the admin email from DB or env
-  const adminEmail =
-    process.env.ADMIN_EMAIL || process.env.EMAIL_FROM || "admin@example.com";
-  const storeName = process.env.NEXT_PUBLIC_STORE_NAME || "Store";
+  settings: StoreSettings | null,
+): Promise<void> {
+  const adminEmail = adminNotificationEmail(settings);
+  if (!adminEmail) {
+    logger.warn("No store email or ADMIN_EMAIL configured; low stock alert skipped");
+    return;
+  }
 
-  const html = getLowStockAlertEmailHtml(productName, currentStock, storeName);
-
-  return sendEmail({
+  await sendEmail({
     to: adminEmail,
     subject: `⚠️ Low Stock Alert: ${productName}`,
-    html,
+    html: getLowStockAlertEmailHtml(productName, currentStock, storeDisplayName(settings)),
   });
-};
+}

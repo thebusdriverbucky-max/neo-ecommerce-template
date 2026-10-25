@@ -11,6 +11,7 @@ import { Toaster } from "sonner";
 import { CookieBanner } from "@/components/layout/CookieBanner";
 import { Analytics } from "@vercel/analytics/react";
 import { db as prisma } from "@/lib/db";
+import { getStoreSettings } from "@/lib/store-settings";
 import { SettingsProvider } from "@/components/providers/settings-provider";
 import { StoreSettingsData } from "@/app/actions/settings";
 
@@ -22,7 +23,7 @@ export const dynamic = "force-dynamic";
 const inter = Inter({ subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
-  const settings = await prisma.storeSettings.findFirst();
+  const settings = await getStoreSettings(prisma);
   const siteName = settings?.storeName || "My Store";
   const siteDescription = settings?.heroSubtitle || "Quality products at great prices";
   const faviconUrl = settings?.faviconUrl || "https://i.imgur.com/udCYp7c.png";
@@ -60,7 +61,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const settings = await prisma.storeSettings.findFirst();
+  const settings = await getStoreSettings(prisma);
   const siteLang = settings?.siteLang || "en";
 
   return (

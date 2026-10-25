@@ -4,16 +4,23 @@ import Stripe from "stripe";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, withDbRetry } from "@/lib/db";
-import { sendLowStockAlert } from "@/lib/email";
-import { generateOrderNumber } from "@/lib/order-number";
-import { confirmOrder, handleOrderCancellation } from "@/lib/order-confirmation";
-import { checkRateLimit } from "@/lib/rate-limit";
-import { createGuestOrderToken, createGuestOrderTokenExpiry, hashGuestOrderToken } from "@/lib/guest-order-token";
+import { allocateOrderNumber, isOrderNumberConflict, resyncOrderNumberCounter } from "@/lib/order-number";
+import { cancelPendingOrder, confirmOrder, handleOrderCancellation } from "@/lib/order-confirmation";
+import { checkRateLimit, type RateLimitResult } from "@/lib/rate-limit";
+import {
+  createGuestOrderToken,
+  createGuestOrderTokenExpiry,
+  hashGuestOrderToken,
+  verifyGuestOrderToken,
+} from "@/lib/guest-order-token";
 import { logger } from "@/lib/logger";
-import { normalizeCurrency, roundMoney, toMinorUnits } from "@/lib/money";
+import { fromMinorUnits, normalizeCurrency, roundMoney, toMinorUnits } from "@/lib/money";
 import { calculateCheckoutTotals } from "@/lib/checkout-totals";
 import { buildDiscountedProductLineItems } from "@/lib/stripe-line-items";
-import { getTrustedClientIdentifier } from "@/lib/request-identity";
+import { ANONYMOUS_CLIENT, getTrustedClientIdentifier, hashClientIdentifier } from "@/lib/request-identity";
+import { getStoreSettings } from "@/lib/store-settings";
+import { isCountryEnabled, resolveFreeShippingThreshold } from "@/lib/shipping";
+import { isBelowStripeMinimum, stripeMinimumChargeMinor } from "@/lib/stripe-minimums";
 import { discountAvailabilityError } from "@/lib/discounts";
 import { createOrderSchema } from "@/lib/validations";
 import { stripe } from "@/lib/stripe";
@@ -30,6 +37,64 @@ type DiscountRecord = {
   value: number;
 };
 
+type PreviousCheckout = {
+  orderId: string;
+  guestAccessToken?: string;
+};
+
+const PENDING_WINDOW_MS = 30 * 60 * 1000;
+const MAX_PENDING_PER_OWNER = 3;
+const MAX_PENDING_PER_IP = 5;
+const MAX_ORDER_NUMBER_ATTEMPTS = 3;
+
+/**
+ * Every non-OK response of POST /api/orders has the shape
+ * { error, code?, ...extra } so the checkout UI can react to `code`.
+ */
+function checkoutError(
+  status: number,
+  error: string,
+  code?: string,
+  extra?: Record<string, unknown>
+): NextResponse {
+  return NextResponse.json({ error, ...(code ? { code } : {}), ...extra }, { status });
+}
+
+function rateLimitResponse(result: RateLimitResult): NextResponse | null {
+  if (result.success) return null;
+  return checkoutError(
+    result.unavailable ? 503 : 429,
+    result.unavailable
+      ? "Checkout protection is temporarily unavailable. Please try again shortly."
+      : "Too many checkout attempts. Please try again later.",
+    "RATE_LIMITED"
+  );
+}
+
+function belowMinimumResponse(currency: string, minimumMinor: number | null): NextResponse {
+  if (minimumMinor === null) {
+    return checkoutError(
+      400,
+      "The order total is below the minimum amount that can be paid by card. Add more items to continue.",
+      "BELOW_MINIMUM_AMOUNT",
+      { currency }
+    );
+  }
+  const minimumAmount = fromMinorUnits(minimumMinor, currency).toNumber();
+  let formatted: string;
+  try {
+    formatted = new Intl.NumberFormat("en-US", { style: "currency", currency }).format(minimumAmount);
+  } catch {
+    formatted = `${minimumAmount} ${currency}`;
+  }
+  return checkoutError(
+    400,
+    `The order total is below the minimum card payment of ${formatted}. Add more items to continue.`,
+    "BELOW_MINIMUM_AMOUNT",
+    { minimumAmount, currency }
+  );
+}
+
 function makeSuccessUrl(appUrl: string, orderId: string, guestToken?: string): string {
   const url = new URL(`/orders/${orderId}`, appUrl);
   url.searchParams.set("success", "true");
@@ -45,17 +110,19 @@ async function existingCheckoutResponse(
   }
 ): Promise<NextResponse> {
   if (!order.stripeCheckoutSessionId) {
-    return NextResponse.json(
-      { error: "This checkout is already being initialized. Please retry with a new checkout." },
-      { status: 409 }
+    return checkoutError(
+      409,
+      "This checkout is already being initialized. Please retry with a new checkout.",
+      "CHECKOUT_REUSE_CONFLICT"
     );
   }
 
   const session = await stripe.checkout.sessions.retrieve(order.stripeCheckoutSessionId);
   if (!session.url) {
-    return NextResponse.json(
-      { error: "The checkout session is no longer available. Please retry." },
-      { status: 409 }
+    return checkoutError(
+      409,
+      "The checkout session is no longer available. Please retry.",
+      "CHECKOUT_REUSE_CONFLICT"
     );
   }
 
@@ -71,6 +138,70 @@ async function existingCheckoutResponse(
   });
 }
 
+/**
+ * Cancels earlier unpaid checkouts the caller proves to own, so a customer
+ * coming back from Stripe is not blocked by their own stock reservation or
+ * pending-order limit. Entries that are not owned, not found or not pending
+ * are ignored silently so the response never reveals whether an order exists.
+ * Returns a response only when one of them turned out to be paid already.
+ */
+async function supersedePreviousCheckouts(
+  previousCheckouts: PreviousCheckout[],
+  dbUserId: string | null,
+  currentRequestId: string | undefined
+): Promise<NextResponse | null> {
+  const requested = new Map<string, PreviousCheckout>();
+  for (const entry of previousCheckouts) {
+    if (!requested.has(entry.orderId)) requested.set(entry.orderId, entry);
+  }
+  if (requested.size === 0) return null;
+
+  const orders = await db.order.findMany({
+    where: { id: { in: [...requested.keys()] } },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      checkoutRequestId: true,
+      guestAccessTokenHash: true,
+      guestAccessTokenExpiresAt: true,
+    },
+  });
+
+  for (const order of orders) {
+    if (order.status !== "PENDING") continue;
+    // A retry of the current request must not cancel its own order.
+    if (currentRequestId && order.checkoutRequestId === currentRequestId) continue;
+
+    const guestAccessToken = requested.get(order.id)?.guestAccessToken;
+    const owned = dbUserId
+      ? order.userId === dbUserId
+      : !order.userId
+        && Boolean(guestAccessToken)
+        && verifyGuestOrderToken(
+          guestAccessToken || "",
+          order.id,
+          order.guestAccessTokenHash,
+          order.guestAccessTokenExpiresAt
+        );
+    if (!owned) continue;
+
+    const result = await cancelPendingOrder(order.id);
+    if (result.outcome === "confirmed") {
+      return checkoutError(
+        409,
+        "A previous checkout from this browser has already been paid. Check that order before paying again.",
+        "PREVIOUS_CHECKOUT_PAID",
+        { orderId: order.id, ...(dbUserId ? {} : { guestAccessToken }) }
+      );
+    }
+    if (result.outcome === "error") {
+      logger.warn("Previous checkout could not be superseded", { orderId: order.id });
+    }
+  }
+  return null;
+}
+
 export async function createOrderCheckout(request: NextRequest): Promise<NextResponse> {
   let createdOrderId: string | null = null;
   let stripeSession: Stripe.Checkout.Session | null = null;
@@ -84,7 +215,7 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
     if (sessionUserId) {
       const user = await db.user.findUnique({ where: { id: sessionUserId }, select: { id: true } });
       if (!user) {
-        return NextResponse.json({ error: "Authentication session is no longer valid" }, { status: 401 });
+        return checkoutError(401, "Authentication session is no longer valid");
       }
       dbUserId = user.id;
     }
@@ -92,7 +223,7 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
     const rawBody = await request.json();
     const parsed = createOrderSchema.safeParse(rawBody);
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid checkout input", details: parsed.error.issues }, { status: 400 });
+      return checkoutError(400, "Invalid checkout input", "INVALID_INPUT", { details: parsed.error.issues });
     }
 
     const {
@@ -103,31 +234,38 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
       billingAddressId,
       discountCode,
       checkoutRequestId,
+      previousCheckouts,
     } = parsed.data;
     const guestEmail = submittedGuestEmail?.trim().toLowerCase() || shippingAddress?.email?.trim().toLowerCase();
 
     if (!dbUserId && (!guestEmail || !shippingAddress)) {
-      return NextResponse.json(
-        { error: "Guest checkout requires an email address and shipping address" },
-        { status: 400 }
-      );
+      return checkoutError(400, "Guest checkout requires an email address and shipping address", "INVALID_INPUT");
     }
 
     if (!dbUserId && (shippingAddressId || billingAddressId)) {
-      return NextResponse.json({ error: "Saved addresses require an authenticated account" }, { status: 400 });
+      return checkoutError(400, "Saved addresses require an authenticated account", "INVALID_INPUT");
     }
 
     if (shippingAddressId && shippingAddress) {
-      return NextResponse.json({ error: "Use either a saved or a new shipping address" }, { status: 400 });
+      return checkoutError(400, "Use either a saved or a new shipping address", "INVALID_INPUT");
     }
 
-    const rateLimitKey = dbUserId || guestEmail || getTrustedClientIdentifier(request);
-    const rateLimit = await checkRateLimit(rateLimitKey, "orders");
-    if (!rateLimit.success) {
-      return NextResponse.json(
-        { error: rateLimit.unavailable ? "Checkout protection is temporarily unavailable. Please try again shortly." : "Too many checkout attempts. Please try again later." },
-        { status: rateLimit.unavailable ? 503 : 429 }
-      );
+    // Release this browser's earlier unpaid checkouts first, so they neither
+    // block the stock check nor count against the pending-order limits.
+    if (previousCheckouts?.length) {
+      const paidResponse = await supersedePreviousCheckouts(previousCheckouts, dbUserId, checkoutRequestId);
+      if (paidResponse) return paidResponse;
+    }
+
+    const clientIp = getTrustedClientIdentifier(request);
+    const rateLimitKey = dbUserId || guestEmail || clientIp;
+    const limited = rateLimitResponse(await checkRateLimit(rateLimitKey, "orders"));
+    if (limited) return limited;
+    if (clientIp !== ANONYMOUS_CLIENT) {
+      // Only enforced with Upstash configured; otherwise checkRateLimit defers
+      // to the external edge limiter.
+      const ipLimited = rateLimitResponse(await checkRateLimit(clientIp, "ordersIp"));
+      if (ipLimited) return ipLimited;
     }
 
     const requestId = checkoutRequestId || randomUUID();
@@ -148,45 +286,74 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
         ? existingOrder.userId === dbUserId
         : !existingOrder.userId && existingOrder.guestEmail === guestEmail;
       if (!sameOwner) {
-        return NextResponse.json({ error: "Checkout request cannot be reused" }, { status: 409 });
+        return checkoutError(409, "Checkout request cannot be reused", "CHECKOUT_REUSE_CONFLICT");
       }
       return existingCheckoutResponse(existingOrder);
     }
 
+    const pendingSince = new Date(Date.now() - PENDING_WINDOW_MS);
     const pendingOwnerFilter = dbUserId ? [{ userId: dbUserId }] : guestEmail ? [{ guestEmail }] : [];
     const pendingOrdersCount = pendingOwnerFilter.length
       ? await db.order.count({
           where: {
             OR: pendingOwnerFilter,
             status: "PENDING",
-            createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+            createdAt: { gte: pendingSince },
           },
         })
       : 0;
 
-    if (pendingOrdersCount >= 3) {
-      return NextResponse.json(
-        { error: "You have too many pending orders. Complete or cancel one before placing another." },
-        { status: 429 }
+    if (pendingOrdersCount >= MAX_PENDING_PER_OWNER) {
+      return checkoutError(
+        429,
+        "You have too many pending orders. Complete or cancel one before placing another.",
+        "TOO_MANY_PENDING"
       );
     }
 
-    const storeSettings = await db.storeSettings.findFirst();
+    // Works without Redis: unpaid reservations are counted per hashed client IP
+    // (Vercel only; the identifier is "anonymous" elsewhere and the check is skipped).
+    const checkoutIpHash = hashClientIdentifier(clientIp);
+    if (checkoutIpHash) {
+      const pendingFromIp = await db.order.count({
+        where: { checkoutIpHash, status: "PENDING", createdAt: { gte: pendingSince } },
+      });
+      if (pendingFromIp >= MAX_PENDING_PER_IP) {
+        return checkoutError(
+          429,
+          "Too many unpaid orders from your network. Complete or cancel an existing checkout, or try again in a few minutes.",
+          "TOO_MANY_PENDING"
+        );
+      }
+    }
+
+    const storeSettings = await getStoreSettings();
     let currency: string;
     try {
       currency = normalizeCurrency(storeSettings?.currency || "USD");
     } catch {
-      return NextResponse.json({ error: "The store currency is not supported for payments" }, { status: 500 });
+      return checkoutError(500, "The store currency is not supported for payments");
     }
 
+    let shippingCountry: string | undefined = shippingAddress?.country;
     if (dbUserId && (shippingAddressId || billingAddressId)) {
       const addressIds = [shippingAddressId, billingAddressId].filter((id): id is string => Boolean(id));
-      const ownedAddresses = await db.address.count({
+      const ownedAddresses = await db.address.findMany({
         where: { id: { in: addressIds }, userId: dbUserId },
+        select: { id: true, country: true },
       });
-      if (ownedAddresses !== new Set(addressIds).size) {
-        return NextResponse.json({ error: "One or more selected addresses are not yours" }, { status: 403 });
+      if (ownedAddresses.length !== new Set(addressIds).size) {
+        return checkoutError(403, "One or more selected addresses are not yours", "INVALID_INPUT");
       }
+      if (shippingAddressId) {
+        shippingCountry = ownedAddresses.find((address) => address.id === shippingAddressId)?.country;
+      }
+    }
+
+    const enabledCountries = storeSettings?.enabledCountries ?? [];
+    if (enabledCountries.length > 0 && (shippingAddress || shippingAddressId)
+      && !isCountryEnabled(shippingCountry, enabledCountries)) {
+      return checkoutError(400, "We do not ship to the selected country", "COUNTRY_NOT_ENABLED");
     }
 
     const quantities = new Map<string, number>();
@@ -204,10 +371,10 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
     for (const [productId, quantity] of quantities) {
       const product = productsById.get(productId);
       if (!product) {
-        return NextResponse.json({ error: "One or more products are unavailable" }, { status: 400 });
+        return checkoutError(400, "One or more products are unavailable", "PRODUCT_UNAVAILABLE");
       }
       if (product.stock < quantity) {
-        return NextResponse.json({ error: `Insufficient stock for ${product.name}` }, { status: 409 });
+        return checkoutError(409, `Insufficient stock for ${product.name}`, "INSUFFICIENT_STOCK", { productId });
       }
 
       const price = roundMoney(product.price, currency);
@@ -221,18 +388,26 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
     if (discountCode) {
       const found = await db.discountCode.findUnique({ where: { code: discountCode.toUpperCase() } });
       if (!found) {
-        return NextResponse.json({ error: "Invalid or expired discount code" }, { status: 400 });
+        return checkoutError(400, "Invalid or expired discount code", "INVALID_DISCOUNT");
       }
       const discountError = discountAvailabilityError(found, new Date(), subtotal.toNumber());
-      if (discountError) return NextResponse.json({ error: discountError }, { status: 400 });
+      if (discountError) return checkoutError(400, discountError, "INVALID_DISCOUNT");
       discount = { type: found.type, value: found.value };
     }
 
     const configuredTaxRate = new Prisma.Decimal(storeSettings?.taxRate ?? 0);
     const configuredShipping = new Prisma.Decimal(storeSettings?.shippingCost ?? 0);
-    const freeShippingThreshold = new Prisma.Decimal(storeSettings?.freeShippingThreshold ?? 500);
-    if (![configuredTaxRate, configuredShipping, freeShippingThreshold].every((value) => value.isFinite()) || configuredTaxRate.isNegative() || configuredTaxRate.gt(100) || configuredShipping.isNegative() || freeShippingThreshold.isNegative()) {
-      return NextResponse.json({ error: "Store payment settings are invalid" }, { status: 500 });
+    // Same rule as the storefront estimate: null disables free shipping, 0 makes it always free.
+    const thresholdSetting = resolveFreeShippingThreshold(storeSettings);
+    const freeShippingThreshold = thresholdSetting === null ? null : new Prisma.Decimal(thresholdSetting);
+    if (
+      ![configuredTaxRate, configuredShipping].every((value) => value.isFinite())
+      || (freeShippingThreshold !== null && (!freeShippingThreshold.isFinite() || freeShippingThreshold.isNegative()))
+      || configuredTaxRate.isNegative()
+      || configuredTaxRate.gt(100)
+      || configuredShipping.isNegative()
+    ) {
+      return checkoutError(500, "Store payment settings are invalid");
     }
 
     const totals = calculateCheckoutTotals({
@@ -250,13 +425,19 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
       throw new Error("CHECKOUT_TOTAL_MISMATCH");
     }
 
+    // Stripe rejects card charges below a per-currency minimum. Fail before
+    // any stock is reserved.
+    if (isBelowStripeMinimum(finalTotalMinor, currency)) {
+      return belowMinimumResponse(currency, stripeMinimumChargeMinor(currency));
+    }
+
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     if (!appUrl || !/^https?:\/\//i.test(appUrl)) {
-      return NextResponse.json({ error: "NEXT_PUBLIC_APP_URL is not configured correctly" }, { status: 500 });
+      return checkoutError(500, "NEXT_PUBLIC_APP_URL is not configured correctly");
     }
 
     const guestTokenExpiry = dbUserId ? null : createGuestOrderTokenExpiry();
-    const createOrderTransaction = () => db.$transaction(async (tx) => {
+    const createOrderTransaction = (orderNumber: string) => db.$transaction(async (tx) => {
       let finalShippingAddressId = shippingAddressId || null;
       if (shippingAddress) {
         const newAddress = await tx.address.create({
@@ -269,11 +450,11 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
         finalShippingAddressId = newAddress.id;
       }
 
-      const orderNumber = await generateOrderNumber();
       const created = await tx.order.create({
         data: {
           orderNumber,
           checkoutRequestId: requestId,
+          checkoutIpHash,
           status: "PENDING",
           subtotal,
           discountAmount,
@@ -316,36 +497,40 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
     });
 
     let order;
-    try {
-      order = await withDbRetry(createOrderTransaction);
-    } catch (error: any) {
-      if (String(error?.message || "").startsWith("INSUFFICIENT_STOCK:")) {
-        return NextResponse.json({ error: "Insufficient stock for one or more products" }, { status: 409 });
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        // The number comes from an atomic counter outside the order
+        // transaction, so concurrent checkouts never receive the same one.
+        const orderNumber = await withDbRetry(() => allocateOrderNumber(db));
+        order = await withDbRetry(() => createOrderTransaction(orderNumber));
+        break;
+      } catch (error: any) {
+        if (isOrderNumberConflict(error) && attempt < MAX_ORDER_NUMBER_ATTEMPTS) {
+          // E.g. orders created by an older release; move the counter past them.
+          await resyncOrderNumberCounter(db);
+          continue;
+        }
+        if (String(error?.message || "").startsWith("INSUFFICIENT_STOCK:")) {
+          return checkoutError(409, "Insufficient stock for one or more products", "INSUFFICIENT_STOCK");
+        }
+        if (error?.code === "P2002" && !isOrderNumberConflict(error)) {
+          const duplicate = await db.order.findUnique({
+            where: { checkoutRequestId: requestId },
+            select: {
+              id: true,
+              userId: true,
+              guestEmail: true,
+              status: true,
+              stripeCheckoutSessionId: true,
+              guestAccessTokenExpiresAt: true,
+            },
+          });
+          if (duplicate) return existingCheckoutResponse(duplicate);
+        }
+        throw error;
       }
-      if (error?.code === "P2002") {
-        const duplicate = await db.order.findUnique({
-          where: { checkoutRequestId: requestId },
-          select: {
-            id: true,
-            userId: true,
-            guestEmail: true,
-            status: true,
-            stripeCheckoutSessionId: true,
-            guestAccessTokenExpiresAt: true,
-          },
-        });
-        if (duplicate) return existingCheckoutResponse(duplicate);
-      }
-      throw error;
     }
     createdOrderId = order.id;
-
-    await Promise.allSettled(
-      orderItemsData.map(async (item) => {
-        const product = await db.product.findUnique({ where: { id: item.productId }, select: { name: true, stock: true } });
-        if (product && product.stock < 5) await sendLowStockAlert(product.name, product.stock);
-      })
-    );
 
     const productLineItems = orderItemsData.map((item) => {
       const product = productsById.get(item.productId);
@@ -445,13 +630,22 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
       // this order and the reserved stock can safely be released now. If a
       // Session exists but the DB write failed, leave it pending for the
       // reconciliation job instead of risking a paid order being cancelled.
-      if (!stripeSession) await handleOrderCancellation(order.id);
+      if (!stripeSession) {
+        try {
+          await handleOrderCancellation(order.id);
+        } catch (cleanupError: any) {
+          logger.error("Failed to release checkout reservation", { orderId: order.id, code: cleanupError?.code });
+        }
+      }
 
-      return NextResponse.json({ error: "Payment initialization failed" }, { status: 502 });
+      if (!stripeSession && stripeError?.code === "amount_too_small") {
+        return belowMinimumResponse(currency, stripeMinimumChargeMinor(currency));
+      }
+      return checkoutError(502, "Payment initialization failed", "PAYMENT_INIT_FAILED");
     }
 
     if (!stripeSession.url) {
-      return NextResponse.json({ error: "Stripe did not return a checkout URL" }, { status: 502 });
+      return checkoutError(502, "Stripe did not return a checkout URL", "PAYMENT_INIT_FAILED");
     }
 
     return NextResponse.json({ url: stripeSession.url, orderId: order.id, guestAccessToken: guestToken });
@@ -471,9 +665,9 @@ export async function createOrderCheckout(request: NextRequest): Promise<NextRes
       }
     }
 
-    return NextResponse.json(
-      { error: error?.message === "CHECKOUT_TOTAL_MISMATCH" ? "Unable to calculate checkout total" : "Failed to create order" },
-      { status: 500 }
+    return checkoutError(
+      500,
+      error?.message === "CHECKOUT_TOTAL_MISMATCH" ? "Unable to calculate checkout total" : "Failed to create order"
     );
   }
 }

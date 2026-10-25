@@ -67,6 +67,16 @@ export const rateLimits = redis ? {
     prefix: "e-commerce:@upstash/ratelimit/orders",
   }),
 
+  // Orders per client IP: 20 requests per 10 minutes. Applied in addition to
+  // the per-user/email limit so one address cannot hoard stock with many
+  // different guest emails.
+  ordersIp: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(20, "10 m"),
+    analytics: true,
+    prefix: "e-commerce:@upstash/ratelimit/orders-ip",
+  }),
+
   // Auth (Register/Login): 5 requests per minute
   auth: new Ratelimit({
     redis,

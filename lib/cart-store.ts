@@ -24,11 +24,78 @@ export interface CheckoutCartItem {
   quantity: number;
 }
 
+/** A Stripe checkout this browser started and has not seen paid yet. */
+export interface PendingCheckout {
+  items: CheckoutCartItem[];
+  guestAccessToken?: string;
+  createdAt: number;
+}
+
+export interface PreviousCheckout {
+  orderId: string;
+  guestAccessToken?: string;
+}
+
+export const PENDING_CHECKOUT_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
+export const PENDING_CHECKOUT_MAX_ENTRIES = 5;
+// Bump when the persisted shape changes; see migrateCartState.
+const CART_STORE_VERSION = 1;
+
+function toCheckoutItems(value: unknown): CheckoutCartItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const { productId, quantity } = (entry ?? {}) as Partial<CheckoutCartItem>;
+    return typeof productId === "string" && typeof quantity === "number" ? [{ productId, quantity }] : [];
+  });
+}
+
+/**
+ * Accepts the current shape ({ items, guestAccessToken?, createdAt }) and the
+ * legacy one (a bare item array); anything else is dropped. Legacy entries
+ * have no timestamp, so they are stamped `now` and age out from here on.
+ */
+export function normalizePendingCheckout(value: unknown, now = Date.now()): PendingCheckout | null {
+  if (Array.isArray(value)) return { items: toCheckoutItems(value), createdAt: now };
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Partial<PendingCheckout>;
+  const createdAt = typeof entry.createdAt === "number" && Number.isFinite(entry.createdAt) ? entry.createdAt : now;
+  return {
+    items: toCheckoutItems(entry.items),
+    ...(typeof entry.guestAccessToken === "string" && entry.guestAccessToken ? { guestAccessToken: entry.guestAccessToken } : {}),
+    createdAt,
+  };
+}
+
+/** Normalizes every entry, drops expired ones and keeps only the newest few. */
+export function prunePendingCheckouts(value: unknown, now = Date.now()): Record<string, PendingCheckout> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>).flatMap(([orderId, raw]) => {
+    const entry = normalizePendingCheckout(raw, now);
+    return entry && now - entry.createdAt <= PENDING_CHECKOUT_MAX_AGE_MS ? [[orderId, entry] as const] : [];
+  });
+  entries.sort((a, b) => b[1].createdAt - a[1].createdAt);
+  return Object.fromEntries(entries.slice(0, PENDING_CHECKOUT_MAX_ENTRIES));
+}
+
+/** Payload for POST /api/orders `previousCheckouts`: most recent first, at most 5. */
+export function buildPreviousCheckouts(pending: unknown, now = Date.now()): PreviousCheckout[] {
+  return Object.entries(prunePendingCheckouts(pending, now))
+    .sort((a, b) => b[1].createdAt - a[1].createdAt)
+    .map(([orderId, entry]) => ({ orderId, ...(entry.guestAccessToken ? { guestAccessToken: entry.guestAccessToken } : {}) }));
+}
+
+/** Persist migration: version 0 stored pendingCheckouts as orderId -> items[]. */
+export function migrateCartState(persisted: unknown, _version?: number): unknown {
+  if (!persisted || typeof persisted !== "object") return persisted;
+  return { ...persisted, pendingCheckouts: prunePendingCheckouts((persisted as { pendingCheckouts?: unknown }).pendingCheckouts) };
+}
+
 interface CartStore {
   items: CartItem[];
   discount: Discount | null;
-  pendingCheckouts: Record<string, CheckoutCartItem[]>;
-  rememberCheckout: (orderId: string, items: CheckoutCartItem[]) => void;
+  pendingCheckouts: Record<string, PendingCheckout>;
+  rememberCheckout: (orderId: string, items: CheckoutCartItem[], guestAccessToken?: string) => void;
+  forgetCheckouts: (orderIds: string[]) => void;
   completeCheckout: (orderId: string, purchased: CheckoutCartItem[]) => void;
   addItem: (item: CartItem) => void;
   removeItem: (productId: string) => void;
@@ -47,14 +114,24 @@ export const useCart = create<CartStore>()(
       items: [],
       discount: null,
       pendingCheckouts: {},
-      rememberCheckout: (orderId, items) => set((state) => ({
-        pendingCheckouts: {
+      rememberCheckout: (orderId, items, guestAccessToken) => set((state) => ({
+        pendingCheckouts: prunePendingCheckouts({
           ...state.pendingCheckouts,
-          [orderId]: items.map(({ productId, quantity }) => ({ productId, quantity })),
-        },
+          [orderId]: {
+            items: items.map(({ productId, quantity }) => ({ productId, quantity })),
+            ...(guestAccessToken ? { guestAccessToken } : {}),
+            createdAt: Date.now(),
+          },
+        }),
       })),
+      forgetCheckouts: (orderIds) => set((state) => {
+        const pendingCheckouts = { ...state.pendingCheckouts };
+        for (const orderId of orderIds) delete pendingCheckouts[orderId];
+        return { pendingCheckouts };
+      }),
       completeCheckout: (orderId, purchased) => set((state) => {
-        const snapshot = state.pendingCheckouts[orderId];
+        // Entries persisted by older versions are bare item arrays.
+        const snapshot = normalizePendingCheckout(state.pendingCheckouts[orderId])?.items;
         // A server-authorized order must also belong to a checkout in this
         // browser. Revisiting an old order must never clear a new cart.
         if (!snapshot) return state;
@@ -147,6 +224,8 @@ export const useCart = create<CartStore>()(
     }),
     {
       name: "cart-storage",
+      version: CART_STORE_VERSION,
+      migrate: (persisted, version) => migrateCartState(persisted, version) as CartStore,
     }
   )
 );

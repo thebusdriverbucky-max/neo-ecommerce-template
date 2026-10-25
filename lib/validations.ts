@@ -73,6 +73,13 @@ export const orderItemSchema = z.object({
   price: z.number().positive(),
 });
 
+// An earlier unpaid checkout from the same browser. The server verifies
+// ownership (account or guest token) before it touches the order.
+export const previousCheckoutSchema = z.object({
+  orderId: z.string().cuid(),
+  guestAccessToken: z.string().max(300).optional(),
+});
+
 export const createOrderSchema = z.object({
   items: z.array(orderItemSchema).min(1).max(50),
   // Kept for backwards-compatible clients, but the server never trusts it.
@@ -83,4 +90,5 @@ export const createOrderSchema = z.object({
   billingAddressId: z.string().cuid().optional(),
   discountCode: z.string().trim().min(1).max(50).optional(),
   checkoutRequestId: z.string().uuid().optional(),
+  previousCheckouts: z.array(previousCheckoutSchema).max(5).optional(),
 });

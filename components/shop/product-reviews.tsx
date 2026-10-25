@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,10 +9,11 @@ import { Star, User, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
+import { StoreImage } from "@/components/ui/StoreImage";
 
 const reviewSchema = z.object({
-  rating: z.number().min(1, "Please select a rating").max(5),
-  comment: z.string().min(5, "Comment must be at least 5 characters long"),
+  rating: z.number().int().min(1, "Please select a rating").max(5),
+  comment: z.string().trim().min(5, "Comment must be at least 5 characters long").max(2000, "Comment must be 2000 characters or fewer"),
 });
 
 type ReviewFormValues = z.infer<typeof reviewSchema>;
@@ -31,9 +31,16 @@ interface Review {
 
 interface ProductReviewsProps {
   productId: string;
+  /** Archived products keep their reviews visible but accept no new ones. */
+  readOnly?: boolean;
 }
 
-export const ProductReviews = ({ productId }: ProductReviewsProps) => {
+async function serverMessage(res: Response, fallback: string): Promise<string> {
+  const body = await res.json().catch(() => null);
+  return typeof body?.error === "string" && body.error ? body.error : fallback;
+}
+
+export const ProductReviews = ({ productId, readOnly = false }: ProductReviewsProps) => {
   const { data: session } = useSession();
   const [reviews, setReviews] = useState<Review[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,13 +87,16 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
         body: JSON.stringify(data),
       });
 
-      if (!res.ok) throw new Error("Failed to submit review");
+      if (!res.ok) {
+        toast.error(await serverMessage(res, `Could not add your review (HTTP ${res.status}).`));
+        return;
+      }
 
       toast.success("Review added successfully!");
       form.reset();
       fetchReviews();
     } catch (error) {
-      toast.error("Failed to add review");
+      toast.error("Could not reach the server. Check your connection and try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -100,12 +110,15 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
         method: "DELETE",
       });
 
-      if (!res.ok) throw new Error("Failed to delete review");
+      if (!res.ok) {
+        toast.error(await serverMessage(res, `Could not delete the review (HTTP ${res.status}).`));
+        return;
+      }
 
       toast.success("Review deleted");
       fetchReviews();
     } catch (error) {
-      toast.error("Failed to delete review");
+      toast.error("Could not reach the server. Check your connection and try again.");
     }
   };
 
@@ -135,7 +148,11 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
         </span>
       </div>
 
-      {session ? (
+      {readOnly ? (
+        <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+          <p>This product is no longer available, so new reviews are closed.</p>
+        </div>
+      ) : session ? (
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 border dark:border-gray-700 p-4 rounded-lg">
           <h3 className="text-lg font-semibold">Leave a review</h3>
 
@@ -189,7 +206,7 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center overflow-hidden">
                   {review.user.image ? (
-                    <Image
+                    <StoreImage
                       src={review.user.image}
                       alt={review.user.name || "User"}
                       width={32}

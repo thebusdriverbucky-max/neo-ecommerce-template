@@ -3,7 +3,7 @@
 "use client";
 
 import { Product } from "@prisma/client";
-import Image from "next/image";
+import { StoreImage } from "@/components/ui/StoreImage";
 import Link from "next/link";
 import { useCart } from "@/lib/cart-store";
 import { ShoppingCart } from "lucide-react";
@@ -50,7 +50,7 @@ export function ProductCard({ product }: ProductCardProps) {
             <WishlistButton productId={product.id} />
           </div>
           {product.image.startsWith('http') ? (
-            <Image
+            <StoreImage
               src={product.image}
               alt={product.name}
               fill

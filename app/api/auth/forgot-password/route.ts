@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
 import { z } from "zod";
 import crypto from "crypto";
-import { sendPasswordResetEmail } from "@/lib/email";
+import { getAppBaseUrl, sendPasswordResetEmail } from "@/lib/email";
+import { getStoreSettings } from "@/lib/store-settings";
+import { findUserByEmail } from "@/lib/user-lookup";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const forgotPasswordSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email(),
 });
 
 export async function POST(req: Request) {
@@ -25,32 +27,40 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { email } = forgotPasswordSchema.parse(body);
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
+    const user = await findUserByEmail(prisma, email);
 
     if (!user) {
-      // Возвращаем 200 OK даже если пользователя нет, чтобы не раскрывать наличие email
+      // Return 200 OK even if the user does not exist, so as not to reveal whether the email is registered
       return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
     }
 
-    // Генерация токена. В БД храним только SHA-256 хэш —
-    // утечка базы не даст возможности восстановить токены.
+    // Generate token. The database stores only the SHA-256 hash —
+    // a database leak will not allow the tokens to be recovered.
     const resetToken = crypto.randomBytes(32).toString("hex");
     const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
-    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 час
+    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
 
     await prisma.user.update({
-      where: { email },
+      where: { id: user.id },
       data: {
         resetToken: hashedToken,
         resetTokenExpiry,
       },
     });
 
-    const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`;
+    // Links in emails use the configured public URL. The localhost fallback
+    // is only for local development; in production a missing URL would
+    // produce an unusable link, so nothing is sent.
+    const baseUrl = getAppBaseUrl() ?? (process.env.NODE_ENV === "production" ? null : "http://localhost:3000");
+    if (!baseUrl) {
+      console.error("Forgot password: NEXT_PUBLIC_APP_URL is not set; reset email not sent");
+      return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
+    }
 
-    await sendPasswordResetEmail(email, resetUrl);
+    const resetUrl = `${baseUrl}/reset-password?token=${resetToken}`;
+
+    // Always send to the address stored on the account.
+    await sendPasswordResetEmail(user.email, resetUrl, await getStoreSettings());
 
     return NextResponse.json({ message: "If an account exists with this email, you will receive a password reset link." });
   } catch (error) {

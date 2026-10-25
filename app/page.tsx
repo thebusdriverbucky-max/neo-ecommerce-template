@@ -1,6 +1,7 @@
 // File: app/page.tsx
 
 import { db } from "@/lib/db";
+import { getStoreSettings } from "@/lib/store-settings";
 import { ProductGrid } from "@/components/shop/product-grid";
 import { CTA } from "@/components/home/cta";
 
@@ -10,7 +11,7 @@ export const metadata = {
 };
 
 export default async function HomePage() {
-  const settings = await db.storeSettings.findFirst();
+  const settings = await getStoreSettings(db);
   const heroTitle = settings?.heroTitle || 'Welcome to Our Store';
   const heroSubtitle = settings?.heroSubtitle || 'Discover quality products at amazing prices. \nYour journey to better shopping starts here.';
   const heroButtonText = settings?.heroButtonText || 'Explore Collection ↓';
@@ -29,22 +30,22 @@ export default async function HomePage() {
       {/* Hero Section */}
       <section className="relative z-10 h-[500px] bg-gradient-to-r from-blue-600 to-blue-800 dark:from-blue-900 dark:to-slate-950 text-white overflow-hidden flex items-center justify-center shadow-md">
 
-        {/* --- Геометрия фона --- */}
+        {/* --- Background geometry --- */}
 
-        {/* Огромный круг справа сверху (свечение) */}
+        {/* Large circle at the top right (glow) */}
         <div className="absolute -top-[30%] -right-[10%] w-[800px] h-[800px] bg-white/5 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Квадрат слева снизу (стеклянный эффект) */}
+        {/* Square at the bottom left (glass effect) */}
         <div className="absolute bottom-20 left-20 w-40 h-40 bg-white/10 backdrop-blur-sm -rotate-12 rounded-3xl border border-white/10 pointer-events-none" />
 
-        {/* Контурный круг по центру (акцент) */}
+        {/* Outlined circle in the center (accent) */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] border border-white/5 rounded-full pointer-events-none" />
 
-        {/* Мелкие частицы */}
+        {/* Small particles */}
         <div className="absolute top-1/4 left-1/4 w-3 h-3 bg-blue-300 rounded-full blur-[1px] animate-pulse pointer-events-none" />
         <div className="absolute bottom-1/3 right-1/4 w-2 h-2 bg-white/40 rounded-full pointer-events-none" />
 
-        {/* --- Контент --- */}
+        {/* --- Content --- */}
         <div className="relative z-10 text-center px-4 max-w-4xl mx-auto">
           <h1 className="text-6xl font-bold mb-6 tracking-tight drop-shadow-sm">
             {heroTitle}
@@ -53,7 +54,7 @@ export default async function HomePage() {
             {heroSubtitle}
           </p>
 
-          {/* Опционально: Кнопка действия в Hero */}
+          {/* Optional: call-to-action button in the hero */}
           <div className="mt-8">
             <a href="#products" className="inline-block px-8 py-3 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-full transition-all duration-300 font-medium">
               {heroButtonText}

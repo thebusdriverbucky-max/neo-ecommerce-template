@@ -9,7 +9,7 @@ import { getTrustedClientIdentifier } from "@/lib/request-identity";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(50),
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(100),
 });
 
@@ -27,9 +27,11 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, email, password } = registerSchema.parse(body);
 
-    // Check if user exists
-    const existingUser = await db.user.findUnique({
-      where: { email },
+    // Emails are stored lowercase; check case-insensitively so legacy
+    // mixed-case rows still block duplicates.
+    const existingUser = await db.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+      select: { id: true },
     });
 
     if (existingUser) {
@@ -64,6 +66,14 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Registration error:", error);
+
+    // Concurrent registrations with the same email lose the unique race.
+    if ((error as { code?: string } | null)?.code === "P2002") {
+      return NextResponse.json(
+        { message: "Email already in use" },
+        { status: 400 }
+      );
+    }
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

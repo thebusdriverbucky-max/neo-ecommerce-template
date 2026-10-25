@@ -1,5 +1,16 @@
 import type { NextAuthConfig } from "next-auth";
 
+/**
+ * True when the email equals ADMIN_EMAIL (trimmed, case-insensitive).
+ * Must stay free of Node/DB dependencies: this file also runs in the edge
+ * middleware.
+ */
+export function isAdminEmail(email: string | null | undefined): boolean {
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  if (!adminEmail || !email) return false;
+  return email.trim().toLowerCase() === adminEmail;
+}
+
 export const authConfig = {
   pages: {
     signIn: "/login",
@@ -22,8 +33,7 @@ export const authConfig = {
         token.role = user.role || "CUSTOMER";
 
         // Securely assign ADMIN role only during initial authentication
-        const adminEmail = process.env.ADMIN_EMAIL;
-        if (adminEmail && user.email === adminEmail) {
+        if (isAdminEmail(user.email)) {
           token.role = "ADMIN";
         }
       }

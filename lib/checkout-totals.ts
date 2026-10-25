@@ -12,7 +12,11 @@ export type CheckoutTotalsInput = {
   discount?: CheckoutDiscount | null;
   taxRate: DecimalInput;
   shippingCost: DecimalInput;
-  freeShippingThreshold: DecimalInput;
+  /**
+   * Discounted subtotal from which shipping is free.
+   * null/undefined: free shipping is disabled; 0: shipping is always free.
+   */
+  freeShippingThreshold?: DecimalInput | null;
 };
 
 export type CheckoutTotals = {
@@ -33,7 +37,9 @@ export function calculateCheckoutTotals(input: CheckoutTotalsInput): CheckoutTot
   const subtotal = roundMoney(input.subtotal, input.currency);
   const taxRate = toDecimal(input.taxRate);
   const shippingCost = toDecimal(input.shippingCost);
-  const freeShippingThreshold = toDecimal(input.freeShippingThreshold);
+  const freeShippingThreshold = input.freeShippingThreshold == null
+    ? null
+    : toDecimal(input.freeShippingThreshold);
 
   if (taxRate.gt(100)) throw new Error("Tax rate cannot exceed 100 percent");
 
@@ -52,7 +58,7 @@ export function calculateCheckoutTotals(input: CheckoutTotalsInput): CheckoutTot
   const discountedSubtotal = roundMoney(subtotal.sub(discountAmount), input.currency);
   const tax = roundMoney(discountedSubtotal.mul(taxRate).div(100), input.currency);
   const shipping = roundMoney(
-    discountedSubtotal.gte(freeShippingThreshold) ? 0 : shippingCost,
+    freeShippingThreshold !== null && discountedSubtotal.gte(freeShippingThreshold) ? 0 : shippingCost,
     input.currency
   );
   const total = roundMoney(discountedSubtotal.add(tax).add(shipping), input.currency);

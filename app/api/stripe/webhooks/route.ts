@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { stripe } from "@/lib/stripe";
-import { fromMinorUnits, normalizeCurrency } from "@/lib/money";
 import { logger } from "@/lib/logger";
+import { applyStripeRefund } from "@/lib/refunds";
+import { getStoreSettings } from "@/lib/store-settings";
 import {
   assertCheckoutSessionMatchesOrder,
   assertPaymentIntentMatchesOrder,
@@ -52,64 +53,7 @@ async function processRefund(refund: Stripe.Refund) {
   if (!order) return;
   assertPaymentIntentMatchesOrder(paymentIntent, order);
 
-  const currency = normalizeCurrency(refund.currency);
-  if (currency !== normalizeCurrency(order.currency)) {
-    throw new Error("Refund currency does not match order currency");
-  }
-  const refundAmount = fromMinorUnits(refund.amount, currency);
-  const incomingStatus = refund.status || "pending";
-  await db.stripeRefund.createMany({
-    data: [{
-      orderId: order.id,
-      stripeRefundId: refund.id,
-      paymentIntentId,
-      amount: refundAmount,
-      amountMinor: refund.amount,
-      currency,
-      status: incomingStatus,
-      stripeCreatedAt: new Date(refund.created * 1000),
-    }],
-    skipDuplicates: true,
-  });
-  await db.stripeRefund.updateMany({
-    where: {
-      stripeRefundId: refund.id,
-      status: { notIn: ["succeeded", "failed", "canceled"] },
-    },
-    data: {
-      amount: refundAmount,
-      amountMinor: refund.amount,
-      currency,
-      status: incomingStatus,
-      stripeCreatedAt: new Date(refund.created * 1000),
-    },
-  });
-
-  const successfulRefunds = await db.stripeRefund.aggregate({
-    where: { orderId: order.id, status: "succeeded" },
-    _sum: { amount: true, amountMinor: true },
-  });
-  if (!successfulRefunds._sum.amountMinor) return;
-
-  const refundedAmountMinor = successfulRefunds._sum.amountMinor || 0;
-  const paidAmountMinor = paymentIntent.amount_received;
-  if (refundedAmountMinor > paidAmountMinor) {
-    throw new Error("Cumulative refunds exceed the paid amount");
-  }
-
-  await db.order.updateMany({
-    where: {
-      id: order.id,
-      status: refundedAmountMinor >= paidAmountMinor
-        ? { in: ["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "PARTIALLY_REFUNDED", "REFUNDED"] }
-        : { in: ["CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "PARTIALLY_REFUNDED"] },
-      refundedAmount: { lte: successfulRefunds._sum.amount || 0 },
-    },
-    data: {
-      refundedAmount: successfulRefunds._sum.amount || 0,
-      status: refundedAmountMinor >= paidAmountMinor ? "REFUNDED" : "PARTIALLY_REFUNDED",
-    },
-  });
+  await applyStripeRefund(order, refund, paymentIntentId, paymentIntent.amount_received);
 }
 
 async function processEvent(event: Stripe.Event) {
@@ -130,7 +74,7 @@ async function processEvent(event: Stripe.Event) {
 
       if (!order) return;
       assertCheckoutSessionMatchesOrder(checkoutSession, order);
-      const settings = await db.storeSettings.findFirst();
+      const settings = await getStoreSettings();
       await confirmOrder(order.id, {
         paymentIntentId,
         checkoutSessionId: checkoutSession.id,
@@ -145,7 +89,7 @@ async function processEvent(event: Stripe.Event) {
       if (!order) return;
       assertPaymentIntentMatchesOrder(paymentIntent, order);
 
-      const settings = await db.storeSettings.findFirst();
+      const settings = await getStoreSettings();
       await confirmOrder(order.id, { paymentIntentId: paymentIntent.id }, settings);
       return;
     }
@@ -167,6 +111,8 @@ async function processEvent(event: Stripe.Event) {
         : await db.order.findUnique({ where: { stripeCheckoutSessionId: checkoutSession.id } });
       if (!order) return;
       assertCheckoutSessionMatchesOrder(checkoutSession, order);
+      // The session is already dead at Stripe, so no payment can arrive for it
+      // and stock can be released directly.
       await handleOrderCancellation(order.id);
       return;
     }

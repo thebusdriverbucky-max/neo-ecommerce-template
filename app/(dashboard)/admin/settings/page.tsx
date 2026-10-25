@@ -4,27 +4,13 @@ import { useState, useEffect, useTransition, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { getSettings, updateSettings, StoreSettingsData } from '@/app/actions/settings';
 import { getPages, updatePage, togglePageVisibility, ContentPageData, seedCMSPages } from '@/app/actions/cms';
-import { COUNTRIES as ALL_COUNTRIES, PRODUCT_CATEGORIES, DEFAULT_CATEGORIES } from '@/lib/constants';
+import { COUNTRIES as ALL_COUNTRIES, PRODUCT_CATEGORIES, DEFAULT_CATEGORIES, SITE_LANGUAGES } from '@/lib/constants';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from 'sonner';
 import { Edit, Eye, EyeOff, Plus, Upload } from 'lucide-react';
 import { CldUploadWidget } from 'next-cloudinary';
-
-// Hardcoded list of countries for now
-const COUNTRIES = [
-  { code: 'US', name: 'United States' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'CA', name: 'Canada' },
-  { code: 'AU', name: 'Australia' },
-  { code: 'DE', name: 'Germany' },
-  { code: 'FR', name: 'France' },
-  { code: 'ES', name: 'Spain' },
-  { code: 'IT', name: 'Italy' },
-  { code: 'NL', name: 'Netherlands' },
-  { code: 'UA', name: 'Ukraine' },
-];
 
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
 
@@ -36,7 +22,11 @@ export default function SettingsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPage, setEditingPage] = useState<any | null>(null);
 
-  const { register, handleSubmit, setValue, watch, reset } = useForm<StoreSettingsData>();
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [freeShippingEnabled, setFreeShippingEnabled] = useState(false);
+  const [freeShippingAmount, setFreeShippingAmount] = useState('');
+
+  const { register, handleSubmit, setValue, watch } = useForm<StoreSettingsData>();
   const cmsForm = useForm<ContentPageData>();
 
   const loadSettings = useCallback(async () => {
@@ -49,8 +39,14 @@ export default function SettingsPage() {
       setValue('currency', data.currency);
       setValue('taxRate', data.taxRate);
       setValue('shippingCost', data.shippingCost);
-      setValue('enabledCountries', data.enabledCountries);
-      setValue('enabledCategories', data.enabledCategories.length > 0 ? data.enabledCategories : DEFAULT_CATEGORIES);
+      // null = free shipping disabled; 0 = every order ships free.
+      const threshold = data.freeShippingThreshold;
+      setFreeShippingEnabled(threshold !== null && threshold !== undefined);
+      setFreeShippingAmount(threshold !== null && threshold !== undefined ? String(threshold) : '');
+      // Only known country names can be saved; ignore stale values.
+      const knownCountries = new Set<string>(ALL_COUNTRIES.map((c) => c.name));
+      setValue('enabledCountries', (data.enabledCountries || []).filter((name) => knownCountries.has(name)));
+      setValue('enabledCategories', (data.enabledCategories || []).length > 0 ? data.enabledCategories : DEFAULT_CATEGORIES);
       setValue('tiktokUrl', data.tiktokUrl || '');
       setValue('facebookUrl', data.facebookUrl || '');
       setValue('instagramUrl', data.instagramUrl || '');
@@ -81,17 +77,42 @@ export default function SettingsPage() {
 
 
   const onSettingsSubmit = (data: StoreSettingsData) => {
+    const clientErrors: Record<string, string> = {};
+    const taxRate = Number(data.taxRate);
+    const shippingCost = Number(data.shippingCost);
+    if (!Number.isFinite(taxRate)) clientErrors.taxRate = 'Enter a valid tax rate';
+    if (!Number.isFinite(shippingCost)) clientErrors.shippingCost = 'Enter a valid shipping cost';
+    let freeShippingThreshold: number | null = null;
+    if (freeShippingEnabled) {
+      freeShippingThreshold = Number(freeShippingAmount);
+      if (freeShippingAmount.trim() === '' || !Number.isFinite(freeShippingThreshold)) {
+        clientErrors.freeShippingThreshold = 'Enter an amount, or 0 to ship every order free';
+      }
+    }
+    if (Object.keys(clientErrors).length > 0) {
+      setFieldErrors(clientErrors);
+      toast.error('Please correct the highlighted fields.');
+      return;
+    }
+
+    setFieldErrors({});
     startTransition(async () => {
-      const res = await updateSettings({
-        ...data,
-        taxRate: Number(data.taxRate),
-        shippingCost: Number(data.shippingCost),
-      });
-      if (res.success) {
-        toast.success('Settings updated successfully');
-        loadSettings();
-      } else {
-        toast.error('Failed to update settings');
+      try {
+        const res = await updateSettings({
+          ...data,
+          taxRate,
+          shippingCost,
+          freeShippingThreshold,
+        });
+        if (res.success) {
+          toast.success('Settings updated successfully');
+          loadSettings();
+        } else {
+          setFieldErrors(res.fieldErrors || {});
+          toast.error(res.error || 'Failed to update settings');
+        }
+      } catch {
+        toast.error('Could not reach the server. Check your connection and try again.');
       }
     });
   };
@@ -170,6 +191,9 @@ export default function SettingsPage() {
     }
   };
 
+  const fieldError = (name: string) =>
+    fieldErrors[name] ? <p className="text-xs text-red-600 mt-1">{fieldErrors[name]}</p> : null;
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Admin Settings</h1>
@@ -203,6 +227,17 @@ export default function SettingsPage() {
           Content Management
         </button>
       </div>
+
+      {activeTab !== 'cms' && Object.keys(fieldErrors).length > 0 && (
+        <div role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <p className="font-semibold">Settings were not saved. Please fix the following:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {Object.entries(fieldErrors).map(([field, message]) => (
+              <li key={field}>{message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {activeTab === 'branding' && (
         <form onSubmit={handleSubmit(onSettingsSubmit)} className="space-y-6 bg-white p-6 rounded-lg shadow">
@@ -243,6 +278,7 @@ export default function SettingsPage() {
                     )}
                   </CldUploadWidget>
                 </div>
+                {fieldError('faviconUrl')}
                 <p className="text-xs text-gray-400">Recommended: 32x32 or 64x64 PNG/ICO</p>
               </div>
 
@@ -275,6 +311,7 @@ export default function SettingsPage() {
                     )}
                   </CldUploadWidget>
                 </div>
+                {fieldError('ogImageUrl')}
                 <p className="text-xs text-gray-400">Recommended: 1200x630 PNG/JPG for social sharing</p>
               </div>
             </div>
@@ -289,14 +326,17 @@ export default function SettingsPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Headline</label>
                 <Input {...register('heroTitle')} placeholder="Discover Our Latest Collection" />
+                {fieldError('heroTitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Subheadline</label>
                 <Input {...register('heroSubtitle')} placeholder="Shop the best products at unbeatable prices" />
+                {fieldError('heroSubtitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Button Text</label>
                 <Input {...register('heroButtonText')} placeholder="Shop Now" />
+                {fieldError('heroButtonText')}
               </div>
             </div>
           </div>
@@ -310,14 +350,17 @@ export default function SettingsPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">CTA Title</label>
                 <Input {...register('ctaTitle')} placeholder="Ready to Get Started?" />
+                {fieldError('ctaTitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">CTA Subtitle</label>
                 <Input {...register('ctaSubtitle')} placeholder="Join thousands of satisfied customers" />
+                {fieldError('ctaSubtitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">CTA Button Text</label>
                 <Input {...register('ctaButtonText')} placeholder="Browse Products" />
+                {fieldError('ctaButtonText')}
               </div>
             </div>
           </div>
@@ -330,6 +373,7 @@ export default function SettingsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Copyright Text</label>
               <Input {...register('footerCopyright')}
                 placeholder="© 2026 My Store. All rights reserved." />
+              {fieldError('footerCopyright')}
               <p className="text-xs text-gray-400 mt-1">
                 Leave empty to use default: © {new Date().getFullYear()} {settings?.storeName || 'Store'}. All rights reserved.
               </p>
@@ -350,6 +394,7 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
               <Input {...register('storeName')} placeholder="My Awesome Store" />
+                {fieldError('storeName')}
               <p className="text-xs text-gray-400 mt-1">
                 Displayed in emails and throughout the site
               </p>
@@ -357,6 +402,7 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Support Email</label>
               <Input type="email" {...register('storeEmail')} placeholder="support@mystore.com" />
+                {fieldError('storeEmail')}
               <p className="text-xs text-gray-400 mt-1">
                 Used in order confirmation emails and customer support
               </p>
@@ -367,16 +413,16 @@ export default function SettingsPage() {
                 {...register('siteLang')}
                 className="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="en">English (en)</option>
-                <option value="ru">Russian (ru)</option>
-                <option value="uk">Ukrainian (uk)</option>
-                <option value="de">German (de)</option>
-                <option value="fr">French (fr)</option>
-                <option value="es">Spanish (es)</option>
+                {SITE_LANGUAGES.map((language) => (
+                  <option key={language.code} value={language.code}>
+                    {language.label}
+                  </option>
+                ))}
               </select>
               <p className="text-xs text-gray-400 mt-1">
                 Sets the lang attribute of the html tag
               </p>
+              {fieldError('siteLang')}
             </div>
           </div>
 
@@ -387,12 +433,17 @@ export default function SettingsPage() {
                 {...register('currency')}
                 className="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                {CURRENCIES.map((c) => (
+                {(settings?.currency && !CURRENCIES.includes(settings.currency) ? [...CURRENCIES, settings.currency] : CURRENCIES).map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
                 ))}
               </select>
+              {fieldError('currency')}
+              <p className="text-xs text-amber-700 mt-1">
+                Changing the currency does not convert prices. Existing product prices and shipping amounts keep
+                their numbers and are shown in the new currency, so update them after switching.
+              </p>
             </div>
 
             <div>
@@ -404,6 +455,7 @@ export default function SettingsPage() {
                 {...register('taxRate', { min: 0 })}
                 placeholder="0.00"
               />
+              {fieldError('taxRate')}
             </div>
 
             <div>
@@ -415,6 +467,42 @@ export default function SettingsPage() {
                 {...register('shippingCost', { min: 0 })}
                 placeholder="0.00"
               />
+              {fieldError('shippingCost')}
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={freeShippingEnabled}
+                  onChange={(e) => {
+                    setFreeShippingEnabled(e.target.checked);
+                    if (e.target.checked && freeShippingAmount.trim() === '') setFreeShippingAmount('0');
+                  }}
+                  className="rounded text-blue-600 focus:ring-blue-500"
+                />
+                Offer free shipping
+              </label>
+              {freeShippingEnabled && (
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Free shipping threshold</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    name="freeShippingThreshold"
+                    value={freeShippingAmount}
+                    onChange={(e) => setFreeShippingAmount(e.target.value)}
+                    placeholder="500.00"
+                  />
+                  {fieldError('freeShippingThreshold')}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-1">
+                {freeShippingEnabled
+                  ? 'Orders at or above this amount (after discounts) ship free. Enter 0 to ship every order free.'
+                  : 'Off: the shipping cost above is always charged.'}
+              </p>
             </div>
           </div>
 
@@ -422,14 +510,17 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">TikTok URL</label>
               <Input {...register('tiktokUrl')} placeholder="https://tiktok.com/@yourstore" />
+                {fieldError('tiktokUrl')}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Facebook URL</label>
               <Input {...register('facebookUrl')} placeholder="https://facebook.com/yourstore" />
+                {fieldError('facebookUrl')}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Instagram URL</label>
               <Input {...register('instagramUrl')} placeholder="https://instagram.com/yourstore" />
+                {fieldError('instagramUrl')}
             </div>
           </div>
 
@@ -459,6 +550,7 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
+            {fieldError('enabledCountries')}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
               {ALL_COUNTRIES.map((country) => (
                 <label key={country.code} className="flex items-center space-x-2 cursor-pointer">
@@ -485,6 +577,7 @@ export default function SettingsPage() {
                 {selectedCategories.length === PRODUCT_CATEGORIES.length ? 'Deselect All' : 'Select All'}
               </button>
             </div>
+            {fieldError('enabledCategories')}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-60 overflow-y-auto border p-4 rounded-md">
               {PRODUCT_CATEGORIES.map((category) => (
                 <label key={category} className="flex items-center space-x-2 cursor-pointer">

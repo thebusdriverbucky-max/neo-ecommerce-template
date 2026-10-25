@@ -57,5 +57,9 @@ jobs:
         run: npm run build
       - name: Bootstrap is repeatable
         run: npm run db:bootstrap
+      - name: Database integration tests
+        env:
+          TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: npm run test:db
       - name: Migration history matches Prisma schema
         run: npx prisma migrate diff --from-url "$DATABASE_URL_UNPOOLED" --to-schema-datamodel prisma/schema.prisma --exit-code

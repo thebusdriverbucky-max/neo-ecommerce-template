@@ -1,8 +1,6 @@
 // File: components/shop/product-grid.tsx
 
 import { Product } from "@prisma/client";
-import Image from "next/image";
-import Link from "next/link";
 import { ProductCard } from "./product-card";
 
 interface ProductGridProps {
