@@ -14,6 +14,7 @@ import { db as prisma } from "@/lib/db";
 import { getStoreSettings } from "@/lib/store-settings";
 import { SettingsProvider } from "@/components/providers/settings-provider";
 import { StoreSettingsData } from "@/app/actions/settings";
+import { getAppBaseUrl } from "@/lib/app-url";
 
 // Store settings and storefront content are read from PostgreSQL at request
 // time. Prevent Next.js from prerendering the whole app during a build when a
@@ -28,7 +29,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const siteDescription = settings?.heroSubtitle || "Quality products at great prices";
   const faviconUrl = settings?.faviconUrl || "https://i.imgur.com/udCYp7c.png";
   const ogImageUrl = settings?.ogImageUrl || faviconUrl;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://neo-e-commerce.vercel.app";
+  const siteUrl = getAppBaseUrl();
 
   return {
     title: {
@@ -42,7 +43,7 @@ export async function generateMetadata(): Promise<Metadata> {
     openGraph: {
       type: "website",
       locale: settings?.siteLang === "ru" ? "ru_RU" : "en_US",
-      url: siteUrl,
+      ...(siteUrl ? { url: siteUrl } : {}),
       title: siteName,
       description: siteDescription,
       images: [{ url: ogImageUrl }],

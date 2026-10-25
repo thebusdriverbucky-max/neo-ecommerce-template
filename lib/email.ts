@@ -1,4 +1,6 @@
 import { Resend } from "resend";
+import { getAppBaseUrl } from "@/lib/app-url";
+export { getAppBaseUrl } from "@/lib/app-url";
 import {
   buildOrderEmailView,
   displayOrderNumber,
@@ -90,17 +92,6 @@ export const sendEmail = async (data: EmailPayload) => {
     return null;
   }
 };
-
-/**
- * Public base URL used for links in emails. NEXT_PUBLIC_APP_URL is the
- * canonical setting; NEXT_PUBLIC_STORE_URL is a legacy alias. Returns null
- * when neither is a usable http(s) URL.
- */
-export function getAppBaseUrl(): string | null {
-  const raw = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_STORE_URL || "").trim();
-  if (!/^https?:\/\/[^\s]+$/i.test(raw)) return null;
-  return raw.replace(/\/+$/, "");
-}
 
 function orderLink(order: Pick<Order, "id" | "userId" | "guestAccessTokenExpiresAt">): string | null {
   const base = getAppBaseUrl();
