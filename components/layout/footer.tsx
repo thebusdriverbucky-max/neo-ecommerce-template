@@ -9,7 +9,7 @@ export function Footer() {
   const { settings } = useSettings();
 
   const year = new Date().getFullYear();
-  const storeName = settings?.storeName || 'E-Commerce Store';
+  const storeName = settings?.storeName?.trim() || 'Store';
   const copyright = settings?.footerCopyright || `© ${year} ${storeName}. All rights reserved.`;
 
   return (

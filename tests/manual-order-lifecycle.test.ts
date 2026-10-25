@@ -86,7 +86,7 @@ function fakeDb(seed?: Partial<State>) {
   const api = (working: State): any => ({
     storeSettings: { findFirst: async () => working.settings },
     address: {
-      count: async ({ where }: any) => working.addresses.filter((a) => where.id.in.includes(a.id) && a.userId === where.userId).length,
+      findMany: async ({ where }: any) => working.addresses.filter((a) => where.id.in.includes(a.id) && a.userId === where.userId),
       create: async ({ data }: any) => {
         const address = { id: `address-${working.addresses.length + 1}`, ...data };
         working.addresses.push(address);
@@ -119,18 +119,33 @@ function fakeDb(seed?: Partial<State>) {
       },
     },
     order: {
-      findUnique: async ({ where }: any) => {
+      findUnique: async ({ where, omit }: any) => {
         const found = working.orders.find((o) => o.id === where.id || o.checkoutRequestId === where.checkoutRequestId);
-        return found ? { ...found, items: found.items || [], user: found.user || null } : null;
+        if (!found) return null;
+        const items = (found.items || []).map((item: any) => {
+          const product = working.products.find((p) => p.id === item.productId);
+          return product ? { ...item, product: { id: product.id, name: product.name } } : item;
+        });
+        const result = { ...found, items, user: found.user || null };
+        for (const [key, hidden] of Object.entries(omit || {})) if (hidden) delete result[key];
+        return result;
       },
+      count: async ({ where }: any) => working.orders.filter((o) => o.status === where.status
+        && o.stockReleasedAt == null && o.reservationExpiresAt > where.reservationExpiresAt.gt
+        && (where.userId === undefined || o.userId === where.userId)
+        && (where.guestEmail === undefined || o.guestEmail === where.guestEmail)
+        && (where.checkoutIpHash === undefined || o.checkoutIpHash === where.checkoutIpHash)).length,
       create: async ({ data }: any) => {
-        if (working.orders.some((o) => o.checkoutRequestId === data.checkoutRequestId)) Object.assign(new Error("unique"), { code: "P2002" });
+        if (working.orders.some((o) => o.checkoutRequestId === data.checkoutRequestId)) throw Object.assign(new Error("unique"), { code: "P2002" });
         const order = { id: `order-${working.orders.length + 1}`, ...data, items: data.items.create, user: null };
         working.orders.push(order);
         return order;
       },
       updateMany: async ({ where, data }: any) => {
-        const order = working.orders.find((o) => o.id === where.id && o.status === where.status && (where.stockReleasedAt === undefined || o.stockReleasedAt == null));
+        const order = working.orders.find((o) => o.id === where.id
+          && (where.status === undefined || o.status === where.status)
+          && (where.stockReleasedAt === undefined || o.stockReleasedAt == null)
+          && (where.reservationExpiresAt?.not !== null || o.reservationExpiresAt != null));
         if (!order) return { count: 0 };
         Object.assign(order, data);
         return { count: 1 };
@@ -281,45 +296,275 @@ test("concurrent same-key checkout creates and reserves exactly once; changed pa
   await assert.rejects(() => manual.createManualOrder(db, { ...baseInput, items: [{ productId: "product000000000000000000002", quantity: 1 }] }), manual.OrderConflictError);
 });
 
-test("strict transitions release once; expired late payment requires recovery before confirmation", async () => {
+const ONE = "product000000000000000000001";
+const TWO = "product000000000000000000002";
+const EXPIRED_AT = new Date("2030-01-09T00:00:00Z");
+
+function place(db: any, overrides: Record<string, unknown> = {}) {
+  return manual.createManualOrder(db, { ...baseInput, items: [{ productId: ONE, quantity: 1 }], ...overrides });
+}
+
+function move(db: any, orderId: string, nextStatus: string, extra: Record<string, unknown> = {}) {
+  return manual.transitionManualOrder(db, { orderId, nextStatus, adminUserId: "admin", ...extra });
+}
+
+async function captureWarnings<T>(run: () => Promise<T>): Promise<{ result: T; warnings: string[] }> {
+  const original = console.warn;
+  const warnings: string[] = [];
+  console.warn = (message: string) => { warnings.push(String(message)); };
+  try {
+    return { result: await run(), warnings };
+  } finally {
+    console.warn = original;
+  }
+}
+
+test("an overdue unpaid order can still be confirmed while its stock is held", async () => {
   const db = fakeDb();
-  const created = await manual.createManualOrder(db, { ...baseInput, items: [{ productId: "product000000000000000000001", quantity: 2 }] });
-  const expiry = new Date("2030-01-09T00:00:00Z");
-  await assert.rejects(() => manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "CONFIRMED", adminUserId: "admin", now: expiry }), manual.OrderConflictError);
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "CANCELLED", adminUserId: "cron", expiration: true, now: expiry });
-  assert.equal(db.state().products[0].stock, 5);
-  await assert.rejects(() => manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "CANCELLED", adminUserId: "admin", now: expiry }), /Invalid order transition/);
-  assert.equal(db.state().products[0].stock, 5);
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "PENDING", adminUserId: "admin", recoverExpired: true, now: expiry });
-  assert.equal(db.state().products[0].stock, 3);
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "CONFIRMED", adminUserId: "admin", now: expiry });
+  const created = await place(db, { items: [{ productId: ONE, quantity: 2 }] });
+  const confirmed = await move(db, created.orderId, "CONFIRMED", { now: EXPIRED_AT });
+  assert.equal(confirmed.status, "CONFIRMED");
   assert.equal(db.state().orders[0].paymentConfirmedBy, "admin");
   assert.equal(db.state().products[0].stock, 3);
+  assert.equal(await manual.expirePendingOrders(db, EXPIRED_AT), 0);
+  assert.equal(db.state().products[0].stock, 3);
 });
 
-test("shipped refund restocks once and unpaid cancellation releases/reclaims coupon usage", async () => {
+test("a transfer that arrives after expiry confirms the order and reserves the stock again", async () => {
+  const db = fakeDb();
+  const created = await place(db, { items: [{ productId: ONE, quantity: 2 }] });
+  assert.equal(await manual.expirePendingOrders(db, EXPIRED_AT), 1);
+  assert.equal(db.state().orders[0].status, "CANCELLED");
+  assert.equal(db.state().products[0].stock, 5);
+  await assert.rejects(() => move(db, created.orderId, "CANCELLED", { now: EXPIRED_AT }), /Invalid order transition/);
+  await assert.rejects(() => move(db, created.orderId, "SHIPPED", { now: EXPIRED_AT }), /Invalid order transition/);
+  assert.equal(db.state().products[0].stock, 5);
+
+  await move(db, created.orderId, "CONFIRMED", { now: new Date("2030-01-10T00:00:00Z") });
+  const stored = db.state().orders[0];
+  assert.equal(stored.status, "CONFIRMED");
+  assert.equal(stored.paymentConfirmedBy, "admin");
+  assert.equal(stored.stockReleasedAt, null);
+  assert.equal(stored.reservationExpiredAt, null);
+  assert.equal(db.state().products[0].stock, 3);
+});
+
+test("late confirmation fails cleanly when the stock was sold; a manual cancellation stays closed", async () => {
+  const db = fakeDb();
+  const created = await place(db, { items: [{ productId: ONE, quantity: 5 }] });
+  await manual.expirePendingOrders(db, EXPIRED_AT);
+  await place(db, { idempotencyKey: "request_other_123", actor: { userId: "user-2", guestEmail: null } });
+  assert.equal(db.state().products[0].stock, 4);
+  await assert.rejects(() => move(db, created.orderId, "CONFIRMED", { now: EXPIRED_AT }), /Not enough stock to reserve "Product" again/);
+  assert.equal(db.state().orders[0].status, "CANCELLED");
+  assert.ok(db.state().orders[0].reservationExpiredAt);
+  assert.equal(db.state().products[0].stock, 4);
+
+  const cancelled = await place(db, { idempotencyKey: "request_third_123", actor: { userId: "user-3", guestEmail: null } });
+  await move(db, cancelled.orderId, "CANCELLED");
+  assert.equal(db.state().products[0].stock, 4);
+  await assert.rejects(() => move(db, cancelled.orderId, "CONFIRMED"), /Invalid order transition/);
+});
+
+test("unpaid cancellation releases the coupon; a late payment honours it while re-opening keeps the limit", async () => {
   const db = fakeDb({ discounts: [{ id: "d1", code: "SAVE", type: "FIXED", value: 1, isActive: true, used: 0, usageLimit: 1 }] });
-  const created = await manual.createManualOrder(db, {
-    ...baseInput,
-    discountCode: "SAVE",
-    items: [{ productId: "product000000000000000000001", quantity: 1 }],
-  });
+  const created = await place(db, { discountCode: "SAVE" });
   assert.equal(db.state().discounts[0].used, 1);
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "CANCELLED", adminUserId: "admin", expiration: true, now: new Date("2030-01-02T00:00:00Z") });
+  await move(db, created.orderId, "CANCELLED", { expiration: true, now: new Date("2030-01-02T00:00:00Z") });
   assert.equal(db.state().discounts[0].used, 0);
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "PENDING", adminUserId: "admin", recoverExpired: true, now: new Date("2030-01-02T01:00:00Z") });
+  // Older admin clients re-open an expired order as Pending first.
+  await move(db, created.orderId, "PENDING", { recoverExpired: true, now: new Date("2030-01-02T01:00:00Z") });
   assert.equal(db.state().discounts[0].used, 1);
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "CONFIRMED", adminUserId: "admin", now: new Date("2030-01-02T02:00:00Z") });
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "PROCESSING", adminUserId: "admin" });
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "SHIPPED", adminUserId: "admin" });
-  await manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "REFUNDED", adminUserId: "admin" });
-  assert.equal(db.state().products[0].stock, 5);
-  await assert.rejects(() => manual.transitionManualOrder(db, { orderId: created.orderId, nextStatus: "REFUNDED", adminUserId: "admin" }), /Invalid order transition/);
-  assert.equal(db.state().products[0].stock, 5);
+  assert.equal(db.state().orders[0].reservationExpiresAt.toISOString(), "2030-01-09T01:00:00.000Z");
+  await move(db, created.orderId, "CANCELLED", { expiration: true, now: new Date("2030-01-10T00:00:00Z") });
+  assert.equal(db.state().discounts[0].used, 0);
+
+  await place(db, { idempotencyKey: "request_other_123", actor: { userId: "user-2", guestEmail: null }, discountCode: "SAVE" });
+  assert.equal(db.state().discounts[0].used, 1);
+  await assert.rejects(() => move(db, created.orderId, "PENDING", { recoverExpired: true }), /limit is exhausted/);
+  assert.equal(db.state().orders[0].status, "CANCELLED");
+  assert.equal(db.state().products[0].stock, 4);
+  await move(db, created.orderId, "CONFIRMED");
+  assert.equal(db.state().discounts[0].used, 2);
+  assert.equal(db.state().products[0].stock, 3);
+
+  const deleted = fakeDb({ discounts: [{ id: "d1", code: "SAVE", type: "FIXED", value: 1, isActive: true, used: 0 }] });
+  const order = await place(deleted, { discountCode: "SAVE" });
+  await manual.expirePendingOrders(deleted, EXPIRED_AT);
+  deleted.state().discounts.length = 0;
+  await move(deleted, order.orderId, "CONFIRMED");
+  assert.equal(deleted.state().orders[0].status, "CONFIRMED");
+  assert.equal(deleted.state().orders[0].total, 14.9);
 });
 
-test("transition table rejects customer-style self confirmation and unsafe terminal transitions", () => {
+test("refunds return stock only when asked and before shipping; paid orders cannot be cancelled", async () => {
+  const db = fakeDb();
+  const packed = await place(db);
+  await move(db, packed.orderId, "CONFIRMED");
+  await move(db, packed.orderId, "PROCESSING");
+  await assert.rejects(() => move(db, packed.orderId, "CANCELLED"), /Invalid order transition/);
+  const released: string[][] = [];
+  await move(db, packed.orderId, "REFUNDED", {
+    restock: true,
+    onStockReleased: async (ids: string[]) => {
+      assert.equal(db.state().orders[0].status, "REFUNDED");
+      released.push(ids);
+    },
+  });
+  assert.deepEqual(released, [[ONE]]);
+  assert.equal(db.state().products[0].stock, 5);
+  await assert.rejects(() => move(db, packed.orderId, "REFUNDED", { restock: true }), /Invalid order transition/);
+  assert.equal(db.state().products[0].stock, 5);
+
+  const shipped = await place(db, { idempotencyKey: "request_second_123" });
+  await move(db, shipped.orderId, "CONFIRMED");
+  await move(db, shipped.orderId, "SHIPPED");
+  await assert.rejects(() => move(db, shipped.orderId, "REFUNDED", { restock: true }), manual.OrderConflictError);
+  await move(db, shipped.orderId, "REFUNDED");
+  assert.equal(db.state().products[0].stock, 4);
+
+  const kept = await place(db, { idempotencyKey: "request_third_123" });
+  await move(db, kept.orderId, "CONFIRMED");
+  await move(db, kept.orderId, "REFUNDED");
+  assert.equal(db.state().products[0].stock, 3);
+  const unpaid = await place(db, { idempotencyKey: "request_fourth_123", actor: { userId: "user-2", guestEmail: null } });
+  await assert.rejects(() => move(db, unpaid.orderId, "CANCELLED", { restock: true }), manual.OrderConflictError);
+});
+
+test("open reservations are capped per customer and per client network", async () => {
+  const db = fakeDb({ products: [{ id: ONE, name: "Product", price: "10.00", stock: 100, isArchived: false }] });
+  for (const key of ["request_a_1234", "request_b_1234", "request_c_1234"]) await place(db, { idempotencyKey: key });
+  await assert.rejects(() => place(db, { idempotencyKey: "request_d_1234" }), manual.OrderLimitError);
+  assert.equal((await place(db, { idempotencyKey: "request_a_1234" })).replayed, true);
+  await move(db, db.state().orders[0].id, "CONFIRMED");
+  await place(db, { idempotencyKey: "request_d_1234" });
+  // Reservations past their date no longer hold a slot.
+  await place(db, { idempotencyKey: "request_e_1234", now: EXPIRED_AT });
+
+  const guest = (key: string, guestEmail: string) => place(db, { idempotencyKey: key, actor: { userId: null, guestEmail } });
+  for (const key of ["guest_a_1234", "guest_b_1234", "guest_c_1234"]) await guest(key, "Guest@Example.test");
+  await assert.rejects(() => guest("guest_d_1234", "guest@example.test"), manual.OrderLimitError);
+
+  const network = (user: string, checkoutIpHash: string | null) =>
+    place(db, { idempotencyKey: `request_${user}_1234`, actor: { userId: user, guestEmail: null }, checkoutIpHash });
+  for (const user of ["n1", "n2", "n3", "n4", "n5"]) await network(user, "hash-1");
+  await assert.rejects(() => network("n6", "hash-1"), /Too many unpaid orders from your network/);
+  await network("n7", "hash-2");
+  await network("n8", null);
+  const capped = db.state().orders.find((order: any) => order.userId === "n1");
+  await move(db, capped.id, "CONFIRMED");
+  assert.equal(db.state().orders.find((order: any) => order.id === capped.id).checkoutIpHash, null);
+  await network("n6", "hash-1");
+});
+
+test("checkout only ships to enabled countries, including saved addresses", async () => {
+  const settings = {
+    currency: "EUR", taxRate: 0, shippingCost: 5, freeShippingThreshold: null, enabledCountries: ["DE", "France"],
+    paymentIban: "DE001", paymentBankName: null, paymentAccountName: null, paymentDetails: null,
+  };
+  const db = fakeDb({ settings, addresses: [{ id: "address00000000000000000001", userId: "user-1", country: "US" }] });
+  const address = (country: string) => ({ ...baseInput.shippingAddress, country });
+  await assert.rejects(() => place(db, { shippingAddress: address("US") }), /do not ship/);
+  await assert.rejects(() => place(db, { shippingAddress: undefined, shippingAddressId: "address00000000000000000001" }), /do not ship/);
+  assert.equal(db.state().products[0].stock, 5);
+  await place(db, { shippingAddress: address("de") });
+  await place(db, { idempotencyKey: "request_france_1", shippingAddress: address("FR") });
+  const open = fakeDb({ settings: { ...settings, enabledCountries: [] } });
+  await place(open, { shippingAddress: address("US") });
+});
+
+test("free shipping can be disabled, always on, or reached by the subtotal before discounts", async () => {
+  const totalFor = async (freeShippingThreshold: unknown, overrides: Record<string, unknown> = {}, shippingCost: unknown = 5) => {
+    const db = fakeDb({
+      settings: { currency: "EUR", taxRate: 0, shippingCost, freeShippingThreshold, paymentIban: "DE001" },
+      discounts: [{ id: "d1", code: "TEN", type: "FIXED", value: 10, isActive: true, used: 0 }],
+    });
+    return (await place(db, { items: [{ productId: ONE, quantity: 5 }], ...overrides })).total;
+  };
+  assert.equal(await totalFor(null), 55);
+  assert.equal(await totalFor(0), 50);
+  assert.equal(await totalFor(50), 50);
+  assert.equal(await totalFor(60), 55);
+  assert.equal(await totalFor(2_000_000), 55);
+  assert.equal(await totalFor(50, { discountCode: "TEN" }), 40);
+  await assert.rejects(() => totalFor(null, {}, Number.NaN), manual.OrderConfigurationError);
+});
+
+test("orders without an IBAN can be confirmed and still expire", async () => {
+  const db = fakeDb({
+    settings: {
+      currency: "EUR", taxRate: 0, shippingCost: 0, freeShippingThreshold: null,
+      paymentIban: null, paymentBankName: null, paymentAccountName: null, paymentDetails: "We will email you the bank details.",
+    },
+  });
+  const paid = await place(db);
+  await place(db, { idempotencyKey: "request_unpaid_1" });
+  await move(db, paid.orderId, "CONFIRMED");
+  assert.equal(db.state().orders[0].status, "CONFIRMED");
+  assert.equal(await manual.expirePendingOrders(db, EXPIRED_AT), 1);
+  assert.equal(db.state().orders[1].status, "CANCELLED");
+  assert.equal(db.state().products[0].stock, 4);
+});
+
+test("tracking can be changed on its own and internal checkout fields never leave the server", async () => {
+  const db = fakeDb();
+  const created = await place(db, { checkoutIpHash: "hash-1" });
+  await move(db, created.orderId, "CONFIRMED");
+  const shipped = await move(db, created.orderId, "SHIPPED", { trackingNumber: "TRK-1" });
+  assert.equal(shipped.trackingNumber, "TRK-1");
+  const tracked = await manual.updateOrderTracking(db, { orderId: created.orderId, trackingNumber: "TRK-2" });
+  assert.equal(tracked.status, "SHIPPED");
+  assert.equal(tracked.trackingNumber, "TRK-2");
+  for (const order of [shipped, tracked]) {
+    for (const field of Object.keys(manual.INTERNAL_ORDER_FIELDS)) assert.equal(field in order, false, field);
+  }
+  assert.equal((await manual.updateOrderTracking(db, { orderId: created.orderId, trackingNumber: null })).trackingNumber, null);
+
+  db.state().orders.push({ id: "card-order", status: "CONFIRMED", reservationExpiresAt: null, items: [] });
+  await assert.rejects(() => manual.updateOrderTracking(db, { orderId: "card-order", trackingNumber: "X" }), manual.OrderInputError);
+  await assert.rejects(() => move(db, "card-order", "SHIPPED"), manual.OrderInputError);
+});
+
+test("one broken expired order does not block the others and stock follow-ups never fail a release", async () => {
+  const db = fakeDb();
+  await place(db);
+  await place(db, { idempotencyKey: "request_second_123", items: [{ productId: TWO, quantity: 1 }] });
+  db.state().products.splice(1, 1);
+  const released: string[][] = [];
+  const { result, warnings } = await captureWarnings(() => manual.expirePendingOrders(db, EXPIRED_AT, 100, {
+    onStockReleased: async (ids: string[]) => { released.push(ids); },
+  }));
+  assert.equal(result, 1);
+  assert.deepEqual(released, [[ONE]]);
+  assert.equal(db.state().orders[0].status, "CANCELLED");
+  assert.equal(db.state().orders[1].status, "PENDING");
+  assert.equal(db.state().products[0].stock, 5);
+  assert.ok(warnings.some((line) => line.includes("Expired reservation could not be released")));
+
+  const other = fakeDb();
+  await place(other);
+  const hookFailure = await captureWarnings(() => manual.expirePendingOrders(other, EXPIRED_AT, 100, {
+    onStockReleased: async () => { throw new Error("redis down"); },
+  }));
+  assert.equal(hookFailure.result, 1);
+  assert.equal(other.state().orders[0].status, "CANCELLED");
+  assert.equal(other.state().products[0].stock, 5);
+  assert.ok(hookFailure.warnings.some((line) => line.includes("Stock release follow-up failed")));
+  assert.equal(hookFailure.warnings.some((line) => line.includes("redis down")), false);
+});
+
+test("transition table: fulfilment moves forward and may skip steps; paid orders close as refunded", () => {
   assert.equal(lifecycle.canTransition("PENDING", "CONFIRMED"), true);
   assert.equal(lifecycle.canTransition("DELIVERED", "PENDING"), false);
   assert.throws(() => lifecycle.assertOrderTransition("CANCELLED", "CONFIRMED"), /Invalid order transition/);
+  for (const [from, to] of [["CONFIRMED", "SHIPPED"], ["CONFIRMED", "DELIVERED"], ["PROCESSING", "DELIVERED"], ["DELIVERED", "REFUNDED"]]) {
+    assert.equal(lifecycle.canTransition(from, to), true, `${from} -> ${to}`);
+  }
+  for (const [from, to] of [["SHIPPED", "PROCESSING"], ["DELIVERED", "SHIPPED"], ["PENDING", "SHIPPED"], ["CONFIRMED", "CANCELLED"], ["SHIPPED", "CANCELLED"], ["REFUNDED", "CONFIRMED"]]) {
+    assert.equal(lifecycle.canTransition(from, to), false, `${from} -> ${to}`);
+  }
+  assert.equal(lifecycle.transitionReleasesStock("PENDING", "CANCELLED"), true);
+  assert.equal(lifecycle.transitionReleasesStock("CONFIRMED", "REFUNDED"), false);
+  assert.equal(lifecycle.transitionReleasesStock("CONFIRMED", "REFUNDED", true), true);
+  assert.equal(lifecycle.transitionReleasesStock("SHIPPED", "REFUNDED", true), false);
 });

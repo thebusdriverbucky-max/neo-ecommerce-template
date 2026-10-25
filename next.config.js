@@ -8,29 +8,12 @@ const nextConfig = {
     serverComponentsExternalPackages: ["isomorphic-dompurify"],
   },
   images: {
-    domains: ["res.cloudinary.com", "localhost", "i.imgur.com"],
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "res.cloudinary.com",
-      },
-      {
-        protocol: "http",
-        hostname: "res.cloudinary.com",
-      },
-      {
-        protocol: "https",
-        hostname: "source.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "i.imgur.com",
-      },
-    ],
+    // Hosts served through the built-in image optimizer (also read by
+    // lib/image-hosts.ts). Images from any other HTTPS host still work:
+    // StoreImage loads them directly (unoptimized), so /_next/image never
+    // becomes an open proxy for arbitrary URLs. To optimize another host,
+    // add it to lib/image-hosts.json and restart the server.
+    remotePatterns: require("./lib/image-hosts.json"),
   },
   headers: async () => {
     return [

@@ -17,7 +17,8 @@ export const productSchema = z.object({
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers and single hyphens"),
   description: z.string().trim().min(10, "Description must be at least 10 characters"),
   price: requiredNumber("Price").pipe(z.number().positive("Price must be positive")
-    .max(99999999.99, "Price is too large")
+    // Checkout handles order totals up to 1,000,000 (lib/order-money.ts).
+    .max(1_000_000, "Price must be 1,000,000 or less")
     .refine(value => Math.abs(value * 100 - Math.round(value * 100)) < 0.000001,
       "Price must have at most 2 decimal places")),
   category: z.string().trim().min(1, "Category is required"),
@@ -33,18 +34,18 @@ export const productSchema = z.object({
 });
 
 export const addressSchema = z.object({
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  email: z.string().email("Invalid email"),
+  firstName: z.string().min(1, "First name is required").max(100, "First name is too long"),
+  lastName: z.string().min(1, "Last name is required").max(100, "Last name is too long"),
+  email: z.string().email("Invalid email").max(254, "Email is too long"),
   phone: z.string()
     .min(5, "Phone number is too short")
     .max(25, "Phone number is too long")
     .regex(/^[\+]?[\d\s\-\(\)]{5,25}$/, "Invalid phone number format"),
-  street: z.string().min(1, "Street is required"),
+  street: z.string().min(1, "Street is required").max(200, "Street is too long"),
   city: z.string()
     .min(1, "City name is required")
     .max(100, "City name is too long"),
-  state: z.string().default(""),
+  state: z.string().max(100, "State is too long").default(""),
   postalCode: z.string()
     .min(1, "Postal code is required")
     .max(15, "Postal code is too long"),

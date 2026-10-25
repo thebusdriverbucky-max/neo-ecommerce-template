@@ -14,7 +14,11 @@ export function ProfileActions() {
     if (window.confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
       setIsDeleting(true);
       try {
-        await deleteAccount();
+        const result = await deleteAccount();
+        if (result && !result.success) {
+          alert(result.error);
+          setIsDeleting(false);
+        }
       } catch (error) {
         console.error(error);
         alert("Failed to delete account");

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateDiscountAmount, calculateStorefrontTotals, couponLookupSchema,
-  discountAvailabilityError, discountSchema, publicDiscount,
+  discountAvailabilityError, discountSchema, publicDiscount, type Discount,
 } from "../lib/discounts";
+import { toMinorUnits } from "../lib/order-money";
 import { moduleLoader } from "./helpers/load-module";
 import { discountApiError } from "../lib/discount-feedback";
 
@@ -77,6 +78,34 @@ test("storefront totals discount products before tax, never tax/shipping, and ex
   const threshold = { ...settings, freeShippingThreshold: 100 };
   assert.equal(calculateStorefrontTotals([{ price: 100, quantity: 1 }], { type: "FIXED", value: 10 }, threshold, "discounted").shipping, 5);
   assert.equal(calculateStorefrontTotals([{ price: 100, quantity: 1 }], { type: "FIXED", value: 10 }, threshold, "subtotal").shipping, 0);
+});
+
+test("storefront free shipping: null disables it, 0 ships everything free, missing settings use the default", () => {
+  const base = { currency: "USD", taxRate: 0, shippingCost: 7 };
+  const ship = (threshold: number | null | undefined, price: number, discount: Discount | null = null) =>
+    calculateStorefrontTotals([{ price, quantity: 1 }], discount, { ...base, freeShippingThreshold: threshold }, "subtotal").shipping;
+  assert.equal(ship(null, 100_000), 7);
+  assert.equal(ship(0, 0.01), 0);
+  assert.equal(ship(0, 1), 0);
+  assert.equal(ship(50, 49.99), 7);
+  assert.equal(ship(50, 50), 0);
+  // The pre-discount subtotal decides, exactly like the server rule.
+  assert.equal(ship(50, 50, { type: "PERCENT", value: 50 }), 0);
+  // No threshold on the settings (or no settings row at all): the default of 500 applies.
+  const noThreshold = (price: number) => calculateStorefrontTotals([{ price, quantity: 1 }], null, { ...base }, "subtotal").shipping;
+  assert.equal(noThreshold(499.99), 7);
+  assert.equal(noThreshold(500), 0);
+  assert.equal(calculateStorefrontTotals([{ price: 500, quantity: 1 }], null, null, "subtotal").total, 500);
+});
+
+test("storefront free-shipping comparison rounds the threshold to cents like toMinorUnits", () => {
+  const settings = (threshold: number) => ({ currency: "USD", taxRate: 0, shippingCost: 5, freeShippingThreshold: threshold });
+  for (const [threshold, price] of [[10.005, 10.01], [10.005, 10], [10.004, 10], [10.004, 10.01], [99.995, 99.99], [99.995, 100]] as const) {
+    const minor = (value: number) => toMinorUnits(String(value));
+    const serverFree = minor(price) >= minor(threshold);
+    const storefront = calculateStorefrontTotals([{ price, quantity: 1 }], null, settings(threshold), "subtotal").shipping === 0;
+    assert.equal(storefront, serverFree, `threshold ${threshold}, price ${price}`);
+  }
 });
 
 test("public discount includes constraints, but never usage counters", () => {

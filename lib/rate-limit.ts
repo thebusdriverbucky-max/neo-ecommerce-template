@@ -11,7 +11,7 @@ export type RateLimitResult = {
 };
 
 const policies = {
-  reviews: [10, 3600000], forgotPassword: [3, 3600000], contact: [5, 3600000],
+  reviews: [10, 3600000], forgotPassword: [3, 3600000], resetPassword: [10, 3600000], contact: [5, 3600000],
   coupons: [15, 3600000], wishlist: [100, 3600000], admin: [100, 60000],
   orders: [50, 60000], auth: [5, 60000],
 } as const;

@@ -16,13 +16,13 @@ export const analytics = {
     }
   },
 
-  // Track purchases
-  purchase: (orderId: string, value: number, items: any[]) => {
+  // Track purchases; pass the store currency from the admin settings.
+  purchase: (orderId: string, value: number, items: any[], currency = 'USD') => {
     if (typeof window !== 'undefined' && window.gtag) {
       window.gtag('event', 'purchase', {
         transaction_id: orderId,
         value,
-        currency: 'USD',
+        currency,
         items,
       });
     }

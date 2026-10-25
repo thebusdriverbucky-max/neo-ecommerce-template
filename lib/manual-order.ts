@@ -1,20 +1,37 @@
 import { createHash, randomBytes } from "node:crypto";
 import { calculateOrderMoney, fromMinorUnits, toMinorUnits } from "./order-money";
 import { discountAvailabilityError } from "./discounts";
+import { isCountryEnabled, resolveFreeShippingThreshold } from "./shipping";
+import { logger } from "./logger";
 import {
   assertOrderTransition,
+  canRestockOnRefund,
   OrderStatusValue,
   reservationExpiry,
   transitionReleasesStock,
-  transitionRequiresReservation,
 } from "./order-lifecycle";
 
 export class OrderConflictError extends Error {}
 export class OrderInputError extends Error {}
 export class OrderConfigurationError extends Error {}
+export class OrderLimitError extends Error {}
+
+// Unpaid orders hold stock for days, so they are capped per customer and,
+// on Vercel, per hashed client IP. Works without Redis.
+export const MAX_OPEN_RESERVATIONS_PER_CUSTOMER = 3;
+export const MAX_OPEN_RESERVATIONS_PER_CLIENT = 5;
+
+// Same order as lib/store-settings.ts (kept inline so this module has no
+// database import): older databases can hold more than one settings row.
+const STORE_SETTINGS_ORDER = [{ createdAt: "asc" }, { id: "asc" }];
+
+// Order totals above this cannot be represented (see lib/order-money.ts), so a
+// higher free-shipping threshold can never be reached.
+const MAX_ORDER_AMOUNT = 1_000_000;
 
 type OrderActor = { userId: string | null; role?: string | null; guestEmail?: string | null };
 type OrderItemInput = { productId: string; quantity: number };
+export type StockReleaseHook = (productIds: string[]) => Promise<void>;
 
 function normalizedEmail(value?: string | null): string | null {
   return value?.trim().toLowerCase() || null;
@@ -75,6 +92,18 @@ function publicOrderResult(order: any, replayed = false) {
   };
 }
 
+/** Shipping in minor units: same rule as the storefront estimate (lib/discounts.ts). */
+function shippingMinorUnits(settings: any, subtotalMinor: number): number {
+  try {
+    const threshold = resolveFreeShippingThreshold(settings);
+    const freeShipping = threshold !== null && Number.isFinite(threshold) && threshold <= MAX_ORDER_AMOUNT
+      && subtotalMinor >= toMinorUnits(String(threshold));
+    return freeShipping ? 0 : toMinorUnits(String(settings.shippingCost ?? 0));
+  } catch {
+    throw new OrderConfigurationError("Store shipping settings are invalid; review them in the admin settings");
+  }
+}
+
 export async function createManualOrder(db: any, input: {
   actor: OrderActor;
   idempotencyKey: string;
@@ -83,6 +112,8 @@ export async function createManualOrder(db: any, input: {
   shippingAddressId?: string;
   billingAddressId?: string;
   discountCode?: string;
+  /** Keyed hash of the trusted client IP (lib/request-identity.ts), if known. */
+  checkoutIpHash?: string | null;
   now?: Date;
 }) {
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(input.idempotencyKey)) throw new OrderInputError("A valid Idempotency-Key is required");
@@ -90,6 +121,7 @@ export async function createManualOrder(db: any, input: {
   if (!input.actor.userId && !guestEmail) throw new OrderInputError("Email is required for guest checkout");
   const items = aggregateOrderItems(input.items);
   const now = input.now || new Date();
+  const checkoutIpHash = input.checkoutIpHash || null;
   const checkoutRequestId = scopedRequestId(input.idempotencyKey, { ...input.actor, guestEmail });
   const requestFingerprint = stableFingerprint({
     actor: input.actor.userId || guestEmail,
@@ -110,7 +142,23 @@ export async function createManualOrder(db: any, input: {
       return publicOrderResult(existing, true);
     }
 
-    const settings = await tx.storeSettings.findFirst();
+    // Only reservations that still hold stock count; expired ones are released
+    // by the cleanup that runs before checkout.
+    const openReservation = { status: "PENDING", stockReleasedAt: null, reservationExpiresAt: { gt: now } };
+    const customerOpen = await tx.order.count({
+      where: { ...openReservation, ...(input.actor.userId ? { userId: input.actor.userId } : { guestEmail }) },
+    });
+    if (customerOpen >= MAX_OPEN_RESERVATIONS_PER_CUSTOMER) {
+      throw new OrderLimitError("You already have several unpaid orders. Pay for one of them or contact the store before placing another.");
+    }
+    if (checkoutIpHash) {
+      const clientOpen = await tx.order.count({ where: { ...openReservation, checkoutIpHash } });
+      if (clientOpen >= MAX_OPEN_RESERVATIONS_PER_CLIENT) {
+        throw new OrderLimitError("Too many unpaid orders from your network. Pay for an existing order or try again later.");
+      }
+    }
+
+    const settings = await tx.storeSettings.findFirst({ orderBy: STORE_SETTINGS_ORDER });
     if (!settings) throw new OrderConfigurationError("Store settings are not configured");
     const payment = paymentSettingsSnapshot(settings);
 
@@ -118,11 +166,22 @@ export async function createManualOrder(db: any, input: {
       throw new OrderInputError("Guests must provide a new address");
     }
     const addressIds = [input.shippingAddressId, input.billingAddressId].filter(Boolean) as string[];
+    let shippingCountry = typeof input.shippingAddress?.country === "string" ? input.shippingAddress.country : null;
     if (addressIds.length) {
-      const owned = await tx.address.count({ where: { id: { in: addressIds }, userId: input.actor.userId } });
-      if (owned !== new Set(addressIds).size) throw new OrderInputError("Address does not belong to the signed-in customer");
+      const owned = await tx.address.findMany({
+        where: { id: { in: addressIds }, userId: input.actor.userId },
+        select: { id: true, country: true },
+      });
+      if (owned.length !== new Set(addressIds).size) throw new OrderInputError("Address does not belong to the signed-in customer");
+      if (input.shippingAddressId) {
+        shippingCountry = owned.find((address: any) => address.id === input.shippingAddressId)?.country ?? null;
+      }
     }
     if (!input.shippingAddress && !input.shippingAddressId) throw new OrderInputError("Shipping address is required");
+    const enabledCountries: string[] = settings.enabledCountries ?? [];
+    if (enabledCountries.length > 0 && !isCountryEnabled(shippingCountry, enabledCountries)) {
+      throw new OrderInputError("We do not ship to the selected country");
+    }
 
     const products = await tx.product.findMany({ where: { id: { in: items.map((item) => item.productId) } } });
     if (products.length !== items.length) throw new OrderInputError("One or more products no longer exist");
@@ -147,9 +206,9 @@ export async function createManualOrder(db: any, input: {
       if (discountError) throw new OrderInputError(discountError);
     }
 
+    // Free shipping is decided on the subtotal before any discount.
     const subtotalMinor = lines.reduce((sum, line) => sum + toMinorUnits(line.unitPrice) * line.quantity, 0);
-    const freeShippingMinor = toMinorUnits(String(settings.freeShippingThreshold ?? 0));
-    const shippingMinor = subtotalMinor >= freeShippingMinor ? 0 : toMinorUnits(String(settings.shippingCost ?? 0));
+    const shippingMinor = shippingMinorUnits(settings, subtotalMinor);
     const effectiveDiscount = discount ? {
       type: discount.type, value: discount.value,
       maxDiscount: discount.maxDiscount == null ? null : String(discount.maxDiscount),
@@ -186,6 +245,7 @@ export async function createManualOrder(db: any, input: {
       data: {
         checkoutRequestId,
         requestFingerprint,
+        checkoutIpHash,
         orderNumber,
         status: "PENDING",
         subtotal: fromMinorUnits(money.subtotalMinor),
@@ -219,14 +279,64 @@ export async function createManualOrder(db: any, input: {
 
 async function reserveOrderItems(tx: any, items: any[]): Promise<void> {
   for (const item of items) {
+    // A paid order is honoured even if the product was archived meanwhile, as
+    // long as the stock is still there.
     const result = await tx.product.updateMany({
-      where: { id: item.productId, isArchived: false, stock: { gte: item.quantity } },
+      where: { id: item.productId, stock: { gte: item.quantity } },
       data: { stock: { decrement: item.quantity } },
     });
-    if (result.count !== 1) throw new OrderConflictError("Stock is unavailable; support must resolve the late payment manually");
+    if (result.count !== 1) {
+      const name = item.product?.name ? `"${item.product.name}"` : "an item";
+      throw new OrderConflictError(`Not enough stock to reserve ${name} again. Increase the stock first, or refund the payment.`);
+    }
   }
 }
 
+/**
+ * Re-counts the discount an expired order gave back. A late payment was made
+ * for the quoted total, so it is honoured even when the code has run out or
+ * was deleted; re-opening an unpaid order keeps the usage limit strict.
+ */
+async function reclaimDiscount(tx: any, code: string, honourQuote: boolean): Promise<void> {
+  const discount = await tx.discountCode.findUnique({ where: { code } });
+  if (!discount) {
+    if (honourQuote) return;
+    throw new OrderConflictError("The original discount no longer exists; support must resolve this order manually");
+  }
+  const claimed = await tx.discountCode.updateMany({
+    where: { id: discount.id, ...(honourQuote || discount.usageLimit == null ? {} : { used: { lt: discount.usageLimit } }) },
+    data: { used: { increment: 1 } },
+  });
+  if (claimed.count !== 1) throw new OrderConflictError("The original discount limit is exhausted; support must resolve this order manually");
+}
+
+const ORDER_DETAIL_INCLUDE = {
+  user: { select: { id: true, name: true, email: true } },
+  shippingAddress: true,
+  items: { include: { product: { select: { id: true, name: true, image: true } } } },
+};
+
+// Checkout bookkeeping that never leaves the server.
+export const INTERNAL_ORDER_FIELDS = { checkoutRequestId: true, requestFingerprint: true, checkoutIpHash: true } as const;
+
+async function runStockReleaseHook(hook: StockReleaseHook | undefined, orderId: string, productIds: string[]) {
+  if (!hook || productIds.length === 0) return;
+  try {
+    await hook(productIds);
+  } catch (error) {
+    logger.warn("Stock release follow-up failed", { orderId, name: error instanceof Error ? error.name : undefined });
+  }
+}
+
+/**
+ * Moves a bank-transfer order to a new status.
+ * - PENDING -> CONFIRMED records the payment, even after the reservation
+ *   period ended, as long as the stock is still held.
+ * - An order cancelled by expiry can be confirmed directly when a late
+ *   transfer arrives: stock and discount are reserved again atomically.
+ *   recoverExpired re-opens it as PENDING instead (older admin clients).
+ * - A refund returns stock only with `restock` and before shipping.
+ */
 export async function transitionManualOrder(db: any, input: {
   orderId: string;
   nextStatus: OrderStatusValue;
@@ -234,36 +344,39 @@ export async function transitionManualOrder(db: any, input: {
   trackingNumber?: string | null;
   expiration?: boolean;
   recoverExpired?: boolean;
+  restock?: boolean;
+  /** Runs after commit with the products whose stock was returned. */
+  onStockReleased?: StockReleaseHook;
   now?: Date;
 }) {
   const now = input.now || new Date();
-  return db.$transaction(async (tx: any) => {
-    const order = await tx.order.findUnique({ where: { id: input.orderId }, include: { items: true, user: true } });
+  const { order, releasedProductIds } = await db.$transaction(async (tx: any) => {
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: { items: { include: { product: { select: { name: true } } } } },
+    });
     if (!order) throw new OrderInputError("Order not found");
-    if (!order.reservationExpiresAt || !order.paymentIban) {
+    if (!order.reservationExpiresAt) {
       throw new OrderInputError("This is not a manual bank-transfer order");
     }
     const current = order.status as OrderStatusValue;
-    const isRecovery = current === "CANCELLED" && input.nextStatus === "PENDING" && !!order.reservationExpiredAt && input.recoverExpired;
-    if (!isRecovery) assertOrderTransition(current, input.nextStatus);
-    if (current === "PENDING" && input.nextStatus === "CONFIRMED" && (!order.reservationExpiresAt || order.reservationExpiresAt <= now)) {
-      throw new OrderConflictError("Reservation expired; expire and recover the order before confirmation");
+    const expiredReservation = current === "CANCELLED" && !!order.reservationExpiredAt;
+    const isRecovery = expiredReservation && input.nextStatus === "PENDING" && !!input.recoverExpired;
+    const isLatePayment = expiredReservation && input.nextStatus === "CONFIRMED";
+    if (!isRecovery && !isLatePayment) assertOrderTransition(current, input.nextStatus);
+    if (input.restock && (input.nextStatus !== "REFUNDED" || !canRestockOnRefund(current))) {
+      throw new OrderConflictError("Only a refund of an order that was not shipped yet can return the items to stock");
     }
-    if (isRecovery) {
+    if (isRecovery || isLatePayment) {
       await reserveOrderItems(tx, order.items);
       if (order.discountCode && order.discountReleasedAt) {
-        const discount = await tx.discountCode.findUnique({ where: { code: order.discountCode } });
-        if (!discount) throw new OrderConflictError("The original discount no longer exists; support must resolve this payment manually");
-        const claimed = await tx.discountCode.updateMany({
-          where: { id: discount.id, ...(discount.usageLimit == null ? {} : { used: { lt: discount.usageLimit } }) },
-          data: { used: { increment: 1 } },
-        });
-        if (claimed.count !== 1) throw new OrderConflictError("The original discount limit is exhausted; support must resolve this payment manually");
+        await reclaimDiscount(tx, order.discountCode, isLatePayment);
       }
     }
 
-    const release = transitionReleasesStock(current, input.nextStatus) && !order.stockReleasedAt;
+    const release = transitionReleasesStock(current, input.nextStatus, input.restock) && !order.stockReleasedAt;
     const releaseDiscount = current === "PENDING" && input.nextStatus === "CANCELLED" && !!order.discountCode && !order.discountReleasedAt;
+    const reReserved = isRecovery || isLatePayment;
     const updated = await tx.order.updateMany({
       where: {
         id: order.id,
@@ -277,7 +390,10 @@ export async function transitionManualOrder(db: any, input: {
         ...(release ? { stockReleasedAt: now } : {}),
         ...(releaseDiscount ? { discountReleasedAt: now } : {}),
         ...(input.expiration ? { reservationExpiredAt: now } : {}),
-        ...(isRecovery ? { stockReleasedAt: null, discountReleasedAt: null, reservationExpiredAt: null, reservationExpiresAt: reservationExpiry(now) } : {}),
+        // The IP hash only exists to cap open reservations.
+        ...(current === "PENDING" ? { checkoutIpHash: null } : {}),
+        ...(reReserved ? { stockReleasedAt: null, discountReleasedAt: null, reservationExpiredAt: null } : {}),
+        ...(isRecovery ? { reservationExpiresAt: reservationExpiry(now) } : {}),
         ...(input.nextStatus === "CONFIRMED" ? { paymentConfirmedAt: now, paymentConfirmedBy: input.adminUserId } : {}),
       },
     });
@@ -293,11 +409,31 @@ export async function transitionManualOrder(db: any, input: {
         await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity } } });
       }
     }
-    return tx.order.findUnique({ where: { id: order.id }, include: { user: true, items: { include: { product: true } } } });
+    return {
+      order: await tx.order.findUnique({ where: { id: order.id }, omit: INTERNAL_ORDER_FIELDS, include: ORDER_DETAIL_INCLUDE }),
+      releasedProductIds: release ? order.items.map((item: any) => item.productId) : [],
+    };
   });
+  await runStockReleaseHook(input.onStockReleased, input.orderId, releasedProductIds);
+  return order;
 }
 
-export async function expirePendingOrders(db: any, now = new Date(), limit = 100): Promise<number> {
+/** Sets or clears the tracking number without touching the status. */
+export async function updateOrderTracking(db: any, input: { orderId: string; trackingNumber: string | null }) {
+  const updated = await db.order.updateMany({
+    where: { id: input.orderId, reservationExpiresAt: { not: null } },
+    data: { trackingNumber: input.trackingNumber || null },
+  });
+  if (updated.count !== 1) throw new OrderInputError("Order not found");
+  return db.order.findUnique({ where: { id: input.orderId }, omit: INTERNAL_ORDER_FIELDS, include: ORDER_DETAIL_INCLUDE });
+}
+
+export async function expirePendingOrders(
+  db: any,
+  now = new Date(),
+  limit = 100,
+  options: { onStockReleased?: StockReleaseHook } = {},
+): Promise<number> {
   const expired = await db.order.findMany({
     where: { status: "PENDING", reservationExpiresAt: { lte: now }, stockReleasedAt: null },
     select: { id: true },
@@ -307,10 +443,24 @@ export async function expirePendingOrders(db: any, now = new Date(), limit = 100
   let count = 0;
   for (const order of expired) {
     try {
-      await transitionManualOrder(db, { orderId: order.id, nextStatus: "CANCELLED", adminUserId: "cron", expiration: true, now });
+      await transitionManualOrder(db, {
+        orderId: order.id,
+        nextStatus: "CANCELLED",
+        adminUserId: "cron",
+        expiration: true,
+        onStockReleased: options.onStockReleased,
+        now,
+      });
       count += 1;
     } catch (error) {
-      if (!(error instanceof OrderConflictError)) throw error;
+      // One broken order must never block checkout or the catalog; the next
+      // cleanup retries it. A conflict means another request already acted.
+      if (!(error instanceof OrderConflictError)) {
+        logger.warn("Expired reservation could not be released", {
+          orderId: order.id,
+          name: error instanceof Error ? error.name : undefined,
+        });
+      }
     }
   }
   return count;

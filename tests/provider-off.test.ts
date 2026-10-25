@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { moduleLoader } from "./helpers/load-module";
 
-test("email import/send is lazy, email-off returns null without logging private data; client rotates keys", async () => {
+test("email import/send is lazy, email-off returns null with a PII-free warning; client rotates keys", async () => {
   delete process.env.RESEND_API_KEY;
   let constructed = 0;
   let sent = 0;
@@ -10,21 +10,26 @@ test("email import/send is lazy, email-off returns null without logging private 
   const load = moduleLoader({
     resend: { Resend: class {
       constructor(key: string) { assert.ok(key); constructed++; }
-      emails = { send: async () => { sent++; return fail ? { error: { message: "sensitive" } } : { data: { id: "test-message" } }; } };
+      emails = { send: async () => { sent++; return fail ? { error: { name: "validation_error", message: "bad request for private@example.test" } } : { data: { id: "test-message" } }; } };
     } },
-    "./email-templates": {},
+    "@/lib/db": { db: {} },
   });
   const email = load("lib/email.ts");
   const payload = { to: "private@example.test", subject: "Private", html: "reset-token-secret" };
-  const originalLog = console.log;
-  const logs: unknown[] = [];
-  console.log = (...values: unknown[]) => { logs.push(values); };
+  const originals = { log: console.log, warn: console.warn, error: console.error };
+  const logs: string[] = [];
+  const capture = (...values: unknown[]) => { logs.push(values.map(String).join(" ")); };
+  console.log = capture; console.warn = capture; console.error = capture;
   try {
     assert.equal(constructed, 0);
     assert.equal(await email.sendEmail(payload), null);
     assert.equal(constructed, 0);
     assert.equal(sent, 0);
-    assert.equal(logs.length, 0);
+    // The owner gets a hint why mail is not arriving, without any private data.
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /RESEND_API_KEY/);
+    assert.doesNotMatch(logs[0], /private@example\.test|reset-token-secret|Private/);
+    logs.length = 0;
     process.env.RESEND_API_KEY = "isolated-key";
     assert.deepEqual(await email.sendEmail(payload), { id: "test-message" });
     await email.sendEmail(payload);
@@ -32,9 +37,14 @@ test("email import/send is lazy, email-off returns null without logging private 
     process.env.RESEND_API_KEY = "rotated-isolated-key";
     await email.sendEmail(payload);
     assert.equal(constructed, 2);
+    assert.equal(logs.length, 0);
     fail = true;
     assert.equal(await email.sendEmail(payload), null);
-  } finally { console.log = originalLog; delete process.env.RESEND_API_KEY; }
+    // Failures log the reason but never the recipient.
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /validation_error/);
+    assert.doesNotMatch(logs[0], /private@example\.test/);
+  } finally { Object.assign(console, originals); delete process.env.RESEND_API_KEY; }
 });
 
 test("optional Redis does not initialize with absent/partial credentials", () => {

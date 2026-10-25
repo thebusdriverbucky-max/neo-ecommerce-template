@@ -1,6 +1,7 @@
 import { MetadataRoute } from "next";
 import { db } from "@/lib/db";
 import { CMS_DEFAULT_PAGES } from "@/lib/cms-defaults";
+import { getAppBaseUrl } from "@/lib/app-url";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,7 +12,10 @@ type SitemapProduct = {
 };
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = "https://neo-e-commerce.vercel.app";
+  // Sitemap entries must be absolute URLs; without a configured public URL
+  // the sitemap stays empty instead of pointing at a demo domain.
+  const baseUrl = getAppBaseUrl();
+  if (!baseUrl) return [];
 
   // Static pages
   const staticPages: MetadataRoute.Sitemap = [

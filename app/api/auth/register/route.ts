@@ -3,15 +3,21 @@
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { logger } from "@/lib/logger";
 import bcrypt from "bcryptjs";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getTrustedClientIdentifier } from "@/lib/request-identity";
+import { findUserByEmail, normalizeEmail } from "@/lib/user-lookup";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(50),
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(100),
 });
+
+function duplicateEmail() {
+  return NextResponse.json({ message: "Email already in use" }, { status: 409 });
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,18 +32,14 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { name, email, password } = registerSchema.parse(body);
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
-    // Check if user exists
-    const existingUser = await db.user.findUnique({
-      where: { email: normalizedEmail },
-    });
+    // Emails are stored lowercase; the lookup is case-insensitive so legacy
+    // mixed-case rows still block duplicates.
+    const existingUser = await findUserByEmail(db, normalizedEmail);
 
     if (existingUser) {
-      return NextResponse.json(
-        { message: "Email already in use" },
-        { status: 400 }
-      );
+      return duplicateEmail();
     }
 
     // Hash password
@@ -65,6 +67,11 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
+    // A concurrent registration with the same email lost the unique race.
+    if ((error as { code?: string } | null)?.code === "P2002") {
+      return duplicateEmail();
+    }
+
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json(
         { message: "Invalid input" },
@@ -72,7 +79,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error("Registration failed");
+    logger.error("Registration failed");
     return NextResponse.json(
       { message: "Registration failed" },
       { status: 500 }

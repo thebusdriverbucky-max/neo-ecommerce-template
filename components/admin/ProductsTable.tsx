@@ -61,7 +61,7 @@ export default function ProductsTable({
                 </div>
               </td>
               <td className="px-6 py-4">{product.category}</td>
-              <td className="px-6 py-4">{formatPrice(product.price)}</td>
+              <td className="px-6 py-4">{formatPrice(product.price, product.currency)}</td>
               <td className="px-6 py-4">{product.stock}</td>
               <td className="px-6 py-4">
                 <span

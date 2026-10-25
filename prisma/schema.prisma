@@ -118,11 +118,12 @@ model Cart {
 model Order {
   id            String      @id @default(cuid())
   // Shared-DB contract: nullable keeps legacy/main Stripe order inserts compatible.
-  // Lite only reads/mutates orders where reservationExpiresAt and paymentIban are set.
+  // Lite only reads/mutates orders where reservationExpiresAt is set.
   checkoutRequestId String? @unique
   requestFingerprint String?
   userId        String?
-  user          User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Orders are financial records: deleting a customer account detaches them.
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
   guestEmail    String?
   items         OrderItem[]
   status        OrderStatus @default(PENDING)
@@ -146,6 +147,8 @@ model Order {
   stockReleasedAt     DateTime?
   paymentConfirmedAt  DateTime?
   paymentConfirmedBy  String?
+  // Keyed hash of the trusted client IP; caps unpaid reservations per client.
+  checkoutIpHash      String?
   
   orderNumber   String?     @unique
   trackingNumber String?
@@ -162,6 +165,7 @@ model Order {
   @@index([userId])
   @@index([status])
   @@index([status, reservationExpiresAt])
+  @@index([checkoutIpHash, status, createdAt])
   @@index([createdAt])
 }
 
@@ -181,7 +185,7 @@ model OrderItem {
 model Address {
   id           String  @id @default(cuid())
   userId       String?
-  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   
   firstName    String
   lastName     String
@@ -304,7 +308,8 @@ model StoreSettings {
   currency         String   @default("USD")
   taxRate           Float    @default(0)
   shippingCost      Float    @default(0)
-  freeShippingThreshold Float @default(500)
+  // null disables free shipping; 0 makes every order ship free.
+  freeShippingThreshold Float? @default(500)
   enabledCountries  String[]
   enabledCategories String[]
   tiktokUrl         String?

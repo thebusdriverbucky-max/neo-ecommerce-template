@@ -41,6 +41,7 @@ test("contact does not claim delivery in email-off/error modes and escapes submi
   const load = moduleLoader({
     "@/lib/rate-limit": { checkRateLimit: async () => ({ success: true }) },
     "@/lib/email": { sendEmail: async (payload: any) => { messages.push(payload); return delivered; } },
+    "@/lib/db": { db: { storeSettings: { findFirst: async () => null } } },
   });
   const body = { name: "<b>Person</b>", email: "person@example.test", subject: "<script>subject</script>", message: "<img src=x onerror=alert(1)>" };
   const { POST } = load("app/api/contact/route.ts");
@@ -54,6 +55,7 @@ test("contact does not claim delivery in email-off/error modes and escapes submi
   assert.equal((await POST(request(body))).status, 200);
   assert.ok(messages.every(message => !/<script>|<img|<b>Person/.test(message.html)));
   assert.match(messages[0].html, /&lt;img/);
+  delete process.env.RESEND_API_KEY;
 });
 
 test("forgot password email-off does not query or mutate database", async () => {

@@ -6,18 +6,28 @@ import { PGlite } from '@electric-sql/pglite';
 
 const directory = path.resolve('prisma/migrations');
 const migration = '20261001130000_lite_safe_schema_and_bank_transfer';
+// Lite migrations, in the order Prisma applies them. Each must be repeatable.
+const liteMigrations = [migration, '20261025130000_lite_order_integrity'];
 const sql = (name: string) => readFileSync(path.join(directory, name, 'migration.sql'), 'utf8');
 async function legacy(db: PGlite) {
   for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
-    if (entry.isDirectory() && entry.name !== migration) await db.exec(sql(entry.name));
+    if (entry.isDirectory() && !liteMigrations.includes(entry.name)) await db.exec(sql(entry.name));
   }
+}
+async function lite(db: PGlite) {
+  for (const name of liteMigrations) await db.exec(sql(name));
+}
+async function deleteRules(db: PGlite) {
+  const result = await db.query<{ conname: string; confdeltype: string }>(
+    `SELECT conname, confdeltype FROM pg_constraint WHERE conname IN ('Order_userId_fkey','Address_userId_fkey') ORDER BY conname`);
+  return result.rows.map(row => `${row.conname}:${row.confdeltype}`);
 }
 
 test('fresh legacy migration chain plus Lite catch-up creates every modeled column and required unique indexes', async () => {
   const db = new PGlite();
   try {
     await legacy(db);
-    await db.exec(sql(migration));
+    await lite(db);
     const schema = readFileSync('prisma/schema.prisma', 'utf8');
     for (const model of schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)) {
       const columns = await db.query<{ column_name: string }>('SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2', ['public', model[1]]);
@@ -27,10 +37,29 @@ test('fresh legacy migration chain plus Lite catch-up creates every modeled colu
       }
     }
     const indexes = await db.query<{ indexname: string }>('SELECT indexname FROM pg_indexes WHERE schemaname = $1', ['public']);
-    for (const name of ['Order_checkoutRequestId_key', 'Review_productId_userId_key', 'Wishlist_userId_productId_key']) {
+    for (const name of ['Order_checkoutRequestId_key', 'Review_productId_userId_key', 'Wishlist_userId_productId_key', 'Order_checkoutIpHash_status_createdAt_idx']) {
       assert.ok(indexes.rows.some(row => row.indexname === name), name);
     }
-    await db.exec(sql(migration));
+    // n = ON DELETE SET NULL: deleting an account keeps its orders and addresses.
+    assert.deepEqual(await deleteRules(db), ['Address_userId_fkey:n', 'Order_userId_fkey:n']);
+    const threshold = await db.query<{ is_nullable: string }>(
+      `SELECT is_nullable FROM information_schema.columns WHERE table_name = 'StoreSettings' AND column_name = 'freeShippingThreshold'`);
+    assert.equal(threshold.rows[0].is_nullable, 'YES');
+    await lite(db);
+  } finally { await db.close(); }
+});
+
+test('after the Lite migrations, deleting a customer keeps their orders and addresses', async () => {
+  const db = new PGlite();
+  try {
+    await legacy(db);
+    await lite(db);
+    await db.exec(`INSERT INTO "User" (id,email,"updatedAt") VALUES ('u','gone@example.test',now());
+      INSERT INTO "Address" (id,"userId","firstName","lastName",email,phone,street,city,state,"postalCode",country,"updatedAt") VALUES ('a','u','A','B','gone@example.test','12345','Street','City','','1000','DE',now());
+      INSERT INTO "Order" (id,"userId","shippingAddressId",subtotal,tax,total,"shippingCost","reservationExpiresAt","updatedAt") VALUES ('o','u','a',100,0,100,0,now(),now());
+      DELETE FROM "User" WHERE id = 'u';`);
+    assert.deepEqual((await db.query('SELECT id,"userId" FROM "Order"')).rows, [{ id: 'o', userId: null }]);
+    assert.deepEqual((await db.query('SELECT id,"userId" FROM "Address"')).rows, [{ id: 'a', userId: null }]);
   } finally { await db.close(); }
 });
 
@@ -48,8 +77,8 @@ test('Lite migration preserves wishlist, existing bank settings, customer text a
       CREATE TABLE "StripeEvent" (id TEXT PRIMARY KEY);
       INSERT INTO "StripeEvent" VALUES ('keep-me');
       INSERT INTO "Order" (id,"userId",subtotal,tax,total,"shippingCost","stripePaymentIntentId","stripeCheckoutSessionId","updatedAt") VALUES ('o','u',100,0,100,0,'pi_keep','cs_keep',now());`);
-    await db.exec(sql(migration));
-    await db.exec(sql(migration));
+    await lite(db);
+    await lite(db);
     assert.equal((await db.query('SELECT * FROM "Wishlist"')).rows.length, 1);
     assert.equal((await db.query('SELECT * FROM "WishlistItem"')).rows.length, 1);
     assert.deepEqual((await db.query('SELECT content,"isVisible" FROM "ContentPage"')).rows, [{ content: 'My content', isVisible: false }]);
@@ -81,14 +110,17 @@ test('Lite additions apply on the actual Full migration history without removing
     for (const section of history.split(/\n-- prisma\/migrations\//).slice(1)) {
       await db.exec(section.slice(section.indexOf('\n') + 1));
     }
+    await db.exec(`INSERT INTO "OrderNumberCounter" (year,value,"updatedAt") VALUES (2026,41,now());`);
     const before = await db.query<{ table_name: string; column_name: string }>("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public' ORDER BY table_name,column_name");
-    await db.exec(sql(migration));
+    await lite(db);
     const after = await db.query<{ table_name: string; column_name: string }>("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='public'");
     const names = new Set(after.rows.map(row => `${row.table_name}.${row.column_name}`));
     for (const row of before.rows) assert.ok(names.has(`${row.table_name}.${row.column_name}`));
     assert.ok(names.has('StripeRefund.stripeRefundId'));
     assert.ok(names.has('Order.paymentIban'));
     assert.ok(names.has('User.sessionVersion'));
-    await db.exec(sql(migration));
+    assert.deepEqual(await deleteRules(db), ['Address_userId_fkey:n', 'Order_userId_fkey:n']);
+    assert.deepEqual((await db.query('SELECT year,value FROM "OrderNumberCounter"')).rows, [{ year: 2026, value: 41 }]);
+    await lite(db);
   } finally { await db.close(); }
 });

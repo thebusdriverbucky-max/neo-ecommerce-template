@@ -8,9 +8,10 @@ import { db } from "./db";
 import { z } from "zod";
 import { checkRateLimit } from "./rate-limit";
 import { getTrustedClientIdentifier } from "./request-identity";
+import { findUserByEmail } from "./user-lookup";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email(),
   password: z.string().min(6),
 });
 
@@ -67,9 +68,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const validatedCreds = loginSchema.safeParse(credentials);
         if (!validatedCreds.success) return null;
 
-        const user = await db.user.findUnique({
-          where: { email: validatedCreds.data.email.trim().toLowerCase() },
-        });
+        // Case-insensitive so legacy mixed-case rows can still sign in.
+        const user = await findUserByEmail(db, validatedCreds.data.email);
 
         if (!user || !user.password) return null;
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db as prisma } from "@/lib/db";
 import { z } from "zod";
+import { logger } from "@/lib/logger";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -14,7 +15,7 @@ const resetPasswordSchema = z.object({
 export async function POST(req: Request) {
   try {
     // Rate limit token guessing attempts
-    const rateLimit = await checkRateLimit(getTrustedClientIdentifier(req), "forgotPassword");
+    const rateLimit = await checkRateLimit(getTrustedClientIdentifier(req), "resetPassword");
     if (!rateLimit.success) {
       return NextResponse.json(
         { message: rateLimit.unavailable ? "Password reset protection is temporarily unavailable" : "Too many requests" },
@@ -48,6 +49,8 @@ export async function POST(req: Request) {
       where: { id: user.id, resetToken: hashedToken, resetTokenExpiry: { gt: new Date() } },
       data: {
         password: hashedPassword,
+        // Revokes every session issued before the reset (see lib/auth.ts).
+        sessionVersion: { increment: 1 },
         resetToken: null,
         resetTokenExpiry: null,
       },
@@ -62,7 +65,7 @@ export async function POST(req: Request) {
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ message: "Invalid data" }, { status: 400 });
     }
-    console.error("Reset password error:", error);
+    logger.error("Reset password failed");
     return NextResponse.json({ message: "Internal server error" }, { status: 500 });
   }
 }

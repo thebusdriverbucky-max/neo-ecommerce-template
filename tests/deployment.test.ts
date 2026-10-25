@@ -35,3 +35,21 @@ test('deployment generates client, deploys migrations and bootstraps CMS; seed n
   assert.ok(reset.indexOf('ALLOW_DEMO_RESET') < reset.indexOf('deleteMany'));
   assert.match(reset, /NODE_ENV === "production"/);
 });
+
+test('robots.txt points to this store sitemap and never to the template demo', async () => {
+  const keys = ['NEXT_PUBLIC_APP_URL', 'NEXT_PUBLIC_STORE_URL', 'NEXT_PUBLIC_SITE_URL'];
+  const saved = keys.map(key => process.env[key]);
+  try {
+    for (const key of keys) delete process.env[key];
+    const robots = (await import('../app/robots')).default;
+    process.env.NEXT_PUBLIC_APP_URL = 'https://shop.example.test/';
+    const configured = robots();
+    assert.equal(configured.sitemap, 'https://shop.example.test/sitemap.xml');
+    const rules = Array.isArray(configured.rules) ? configured.rules[0] : configured.rules;
+    assert.ok(!([] as string[]).concat(rules.disallow ?? []).includes('/_next'), 'page assets must stay crawlable');
+    process.env.NEXT_PUBLIC_APP_URL = '';
+    assert.equal('sitemap' in robots(), false);
+  } finally {
+    keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index]; });
+  }
+});

@@ -30,7 +30,10 @@ test("actual admin UI preserves errors/drafts, handles widget callbacks and save
     const requests: any[] = [];
     let saveResponse: () => Promise<Response> = async () => Response.json({ error: "Slug is already in use", fieldErrors: { slug: "Choose a unique slug" } }, { status: 409 });
     install("fetch", async (url: string, options?: RequestInit) => {
-      if (url === "/api/products?all=true") return Response.json([]);
+      if (url.startsWith("/api/products?")) {
+        assert.equal(new URLSearchParams(url.split("?")[1]).get("all"), "true");
+        return Response.json({ products: [], total: 0, page: 1, pageSize: 20 });
+      }
       assert.equal(url, "/api/products");
       assert.equal(options?.method, "POST");
       requests.push(JSON.parse(options!.body as string));

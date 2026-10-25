@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import { z } from "zod";
+import { resolveFreeShippingThreshold } from "./shipping";
 
 export const MAX_DISCOUNT_VALUE = 1_000_000;
 
@@ -134,9 +135,14 @@ export function calculateStorefrontTotals(
   const discountAmount = calculateDiscountAmount(subtotal.toString(), discountError ? null : discount, roundingCurrency);
   const discountedSubtotal = round(subtotal.sub(discountAmount));
   const tax = round(discountedSubtotal.mul(settings?.taxRate ?? 0).div(100));
+  // Mirrors the server rule in lib/manual-order.ts: the pre-discount subtotal
+  // is compared with the threshold rounded to cents. null disables free
+  // shipping; a missing settings row uses the default threshold.
+  const threshold = resolveFreeShippingThreshold(settings);
   const thresholdBase = shippingBasis === "subtotal" ? subtotal : discountedSubtotal;
-  const shipping = round(new Decimal(thresholdBase.gte(settings?.freeShippingThreshold ?? (shippingBasis === "subtotal" ? 0 : 500))
-    ? 0 : settings?.shippingCost ?? 0));
+  const freeShipping = threshold !== null
+    && thresholdBase.gte(new Decimal(String(threshold)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP));
+  const shipping = round(new Decimal(freeShipping ? 0 : settings?.shippingCost ?? 0));
   return {
     subtotal: subtotal.toNumber(), discountAmount, discountError,
     tax: tax.toNumber(), shipping: shipping.toNumber(),

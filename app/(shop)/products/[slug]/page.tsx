@@ -2,7 +2,6 @@
 
 import { db } from "@/lib/db";
 import { notFound } from "next/navigation";
-import Image from "next/image";
 import { ProductCard } from "@/components/shop/product-card";
 import { AddToCartButton } from "@/components/shop/add-to-cart-button";
 import { formatPrice } from "@/lib/utils";
@@ -35,6 +34,8 @@ export async function generateMetadata({ params }: ProductPageProps) {
   return {
     title: product.name,
     description: product.description,
+    // Archived products stay reachable (order history links) but must not be indexed.
+    ...(product.isArchived ? { robots: { index: false, follow: false } } : {}),
     openGraph: {
       title: product.name,
       description: product.description,
@@ -103,16 +104,26 @@ export default async function ProductPage({ params }: ProductPageProps) {
               {Number(product.rating)} / 5
             </span>
           </div>
-          <AddToCartButton
-            product={product}
-            actionElement={<WishlistButton productId={product.id} />}
-          />
+          {product.isArchived ? (
+            <div
+              role="status"
+              className="rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-200"
+            >
+              <p className="font-semibold">This product is no longer available</p>
+              <p className="mt-1">It has been removed from the store and cannot be purchased.</p>
+            </div>
+          ) : (
+            <AddToCartButton
+              product={product}
+              actionElement={<WishlistButton productId={product.id} />}
+            />
+          )}
         </div>
       </div>
 
       {/* Reviews */}
       <div className="mb-12">
-        <ProductReviews productId={product.id} />
+        <ProductReviews productId={product.id} readOnly={product.isArchived} />
       </div>
 
       {/* Related Products */}

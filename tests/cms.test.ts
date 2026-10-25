@@ -96,13 +96,30 @@ test("every supported actual route uses CMS title/content/visibility and sanitiz
   }
 });
 
-test("sitemap excludes hidden CMS routes and includes supported defaults", async () => {
-  const load = moduleLoader({ "@/lib/db": { db: {
-    contentPage: { findMany: async () => [{ slug: "cookies", isVisible: false }] },
-    product: { findMany: async () => [] },
-  } } });
-  const links = await load("app/sitemap.ts").default();
+function withAppUrl<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
+  const keys = ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_STORE_URL", "NEXT_PUBLIC_SITE_URL"] as const;
+  const saved = keys.map(key => process.env[key]);
+  for (const key of keys) delete process.env[key];
+  if (value !== undefined) process.env.NEXT_PUBLIC_APP_URL = value;
+  return run().finally(() => keys.forEach((key, i) => {
+    if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i];
+  }));
+}
+
+const sitemapLoader = () => moduleLoader({ "@/lib/db": { db: {
+  contentPage: { findMany: async () => [{ slug: "cookies", isVisible: false }] },
+  product: { findMany: async () => [{ slug: "mug", updatedAt: new Date("2026-01-01") }] },
+} } });
+
+test("sitemap excludes hidden CMS routes and includes supported defaults", () => withAppUrl("https://shop.example.test/", async () => {
+  const links = await sitemapLoader()("app/sitemap.ts").default();
   assert.ok(!links.some((page: any) => page.url.endsWith("/cookies")));
   assert.ok(links.some((page: any) => page.url.endsWith("/press")));
   assert.ok(links.some((page: any) => page.url.endsWith("/support")));
-});
+  assert.ok(links.some((page: any) => page.url === "https://shop.example.test/products/mug"));
+  assert.ok(links.every((page: any) => page.url.startsWith("https://shop.example.test")));
+}));
+
+test("sitemap never falls back to a vendor demo domain when no public URL is configured", () => withAppUrl(undefined, async () => {
+  assert.deepEqual(await sitemapLoader()("app/sitemap.ts").default(), []);
+}));

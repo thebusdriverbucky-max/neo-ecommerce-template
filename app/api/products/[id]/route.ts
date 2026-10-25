@@ -6,6 +6,21 @@ import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { productSchema } from "@/lib/validations";
 import { productFieldErrors, productWriteError } from "@/lib/product-feedback";
+import { logger } from "@/lib/logger";
+import { rearmLowStockAlerts } from "@/lib/inventory-alerts";
+
+function inOrdersMessage(count?: number): string {
+  const subject = count === undefined ? "appears in existing orders" : `appears in ${count} order(s)`;
+  return `This product ${subject} and can't be deleted. Archive it instead — it will be hidden from the store and kept in order history.`;
+}
+
+function revalidateProductPaths(...slugs: Array<string | undefined>) {
+  revalidatePath("/products");
+  for (const slug of new Set(slugs)) {
+    if (slug) revalidatePath(`/products/${slug}`);
+  }
+  revalidatePath("/");
+}
 
 export async function GET(
   request: NextRequest,
@@ -22,7 +37,7 @@ export async function GET(
 
     return NextResponse.json(product);
   } catch (error) {
-    console.error("Product fetch error:", error);
+    logger.error("Product fetch error", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json(
       { error: "Failed to fetch product" },
       { status: 500 }
@@ -51,14 +66,25 @@ export async function PUT(
       }, { status: 400 });
     }
 
+    // The previous slug is needed to refresh the old URL after a rename.
+    const previous = await db.product.findUnique({
+      where: { id: params.id },
+      select: { slug: true },
+    });
+
     const updatedProduct = await db.product.update({
       where: { id: params.id },
       data: parsed.data,
     });
 
-    revalidatePath("/products");
-    revalidatePath(`/products/${updatedProduct.slug}`);
-    revalidatePath("/");
+    // The admin may have raised the stock above the low-stock threshold.
+    try {
+      await rearmLowStockAlerts(db, [params.id]);
+    } catch (error) {
+      logger.warn("Low stock alert re-arm failed", { productId: params.id, error: error instanceof Error ? error.name : "unknown" });
+    }
+
+    revalidateProductPaths(previous?.slug, updatedProduct.slug);
 
     return NextResponse.json(updatedProduct);
   } catch (error) {
@@ -82,23 +108,35 @@ export async function DELETE(
     const hardDelete = url.searchParams.get("hard") === "true";
 
     if (hardDelete) {
-      await db.product.delete({
+      // OrderItem.productId is RESTRICT: a product that was ever ordered can
+      // only be archived, which keeps it in the order history.
+      const orderCount = await db.orderItem.count({ where: { productId: params.id } });
+      if (orderCount > 0) {
+        return NextResponse.json({ error: inOrdersMessage(orderCount) }, { status: 409 });
+      }
+      const deleted = await db.product.delete({
         where: { id: params.id },
       });
-      revalidatePath("/products");
-      revalidatePath("/");
+      revalidateProductPaths(deleted?.slug);
       return NextResponse.json({ message: "Product deleted permanently" }, { status: 200 });
     } else {
-      await db.product.update({
+      const archived = await db.product.update({
         where: { id: params.id },
         data: { isArchived: true },
       });
-      revalidatePath("/products");
-      revalidatePath("/");
+      revalidateProductPaths(archived?.slug);
       return NextResponse.json({ message: "Product archived" }, { status: 200 });
     }
   } catch (error) {
-    console.error("Product deletion error:", error);
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    if (code === "P2025") {
+      return NextResponse.json({ error: "Product no longer exists. Refresh the product list." }, { status: 404 });
+    }
+    if (code === "P2003") {
+      // An order referenced the product between the check and the delete.
+      return NextResponse.json({ error: inOrdersMessage() }, { status: 409 });
+    }
+    logger.error("Product deletion error", { error: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json(
       { error: "Failed to delete/archive product" },
       { status: 500 }

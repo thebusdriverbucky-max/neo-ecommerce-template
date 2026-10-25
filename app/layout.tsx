@@ -11,6 +11,8 @@ import { Toaster } from "sonner";
 import { CookieBanner } from "@/components/layout/CookieBanner";
 import { Analytics } from "@vercel/analytics/react";
 import { db as prisma } from "@/lib/db";
+import { getStoreSettings, storeDisplayName } from "@/lib/store-settings";
+import { getAppBaseUrl } from "@/lib/app-url";
 import { SettingsProvider } from "@/components/providers/settings-provider";
 import { StoreSettingsData } from "@/app/actions/settings";
 
@@ -20,12 +22,12 @@ const inter = Inter({ subsets: ["latin"] });
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
-  const settings = await prisma.storeSettings.findFirst();
-  const siteName = settings?.storeName || "My Store";
+  const settings = await getStoreSettings(prisma);
+  const siteName = storeDisplayName(settings);
   const siteDescription = settings?.heroSubtitle || "Quality products at great prices";
-  const faviconUrl = settings?.faviconUrl || "https://i.imgur.com/udCYp7c.png";
+  const faviconUrl = settings?.faviconUrl || null;
   const ogImageUrl = settings?.ogImageUrl || faviconUrl;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://neo-e-commerce.vercel.app";
+  const siteUrl = getAppBaseUrl();
 
   return {
     title: {
@@ -33,22 +35,20 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s | ${siteName}`,
     },
     description: siteDescription,
-    icons: {
-      icon: faviconUrl,
-    },
+    ...(faviconUrl ? { icons: { icon: faviconUrl } } : {}),
     openGraph: {
       type: "website",
       locale: settings?.siteLang === "ru" ? "ru_RU" : "en_US",
-      url: siteUrl,
+      ...(siteUrl ? { url: siteUrl } : {}),
       title: siteName,
       description: siteDescription,
-      images: [{ url: ogImageUrl }],
+      ...(ogImageUrl ? { images: [{ url: ogImageUrl }] } : {}),
     },
     twitter: {
-      card: "summary_large_image",
+      card: ogImageUrl ? "summary_large_image" : "summary",
       title: siteName,
       description: siteDescription,
-      images: [ogImageUrl],
+      ...(ogImageUrl ? { images: [ogImageUrl] } : {}),
     },
   };
 }
@@ -58,7 +58,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const settings = await prisma.storeSettings.findFirst();
+  const settings = await getStoreSettings(prisma);
   const siteLang = settings?.siteLang || "en";
 
   return (

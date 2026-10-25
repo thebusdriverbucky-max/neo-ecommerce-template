@@ -71,6 +71,7 @@ test("registration normalizes email and leaves role assignment to ADMIN_EMAIL au
   const load = moduleLoader({
     "@/lib/db": { db: { user: {
       findUnique: async ({ where }: any) => users.get(where.email) ?? null,
+      findFirst: async ({ where }: any) => [...users.values()].find(user => user.email.toLowerCase() === where.email.equals.toLowerCase()) ?? null,
       create: async ({ data }: any) => { written = data; const user = { id: `user-${users.size + 1}`, ...data }; users.set(data.email, user); return user; },
     } } },
     "@/lib/rate-limit": { checkRateLimit: async () => ({ success: true }) },

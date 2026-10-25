@@ -264,7 +264,7 @@ Hours: Mon-Fri, 9 AM-6 PM EST`,
 
 async function main() {
   try {
-    // Очистка в правильном порядке
+    // Clear in dependency order
     await db.review.deleteMany({});
     await db.wishlist.deleteMany({});
     await db.inventoryAlert.deleteMany({});
@@ -274,7 +274,7 @@ async function main() {
 
     console.log("✓ Cleared existing data");
 
-    // Создание продуктов
+    // Create products
     for (const product of products) {
       await db.product.create({
         data: { ...product, price: parseFloat(product.price.toString()) },

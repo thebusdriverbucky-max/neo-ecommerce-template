@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
+import { StoreImage } from "@/components/ui/StoreImage";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
@@ -22,7 +22,7 @@ export function ProductGallery({ mainImage, images, alt }: ProductGalleryProps) 
       <div className="flex flex-col gap-4">
         {!isExpanded ? (
           <div className="flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg h-96">
-            <Image
+            <StoreImage
               src={mainImage}
               alt={alt}
               width={500}
@@ -35,7 +35,7 @@ export function ProductGallery({ mainImage, images, alt }: ProductGalleryProps) 
           <div className="grid grid-cols-1 gap-4">
             {allImages.map((img, index) => (
               <div key={index} className="flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg h-96">
-                <Image
+                <StoreImage
                   src={img}
                   alt={`${alt} - ${index + 1}`}
                   width={500}

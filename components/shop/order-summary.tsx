@@ -4,7 +4,8 @@
 
 import { CartItem, useCart } from "@/lib/cart-store";
 import { formatPrice } from "@/lib/utils";
-import Image from "next/image";
+import { StoreImage } from "@/components/ui/StoreImage";
+import { CldImage } from "next-cloudinary";
 import { CouponInput } from "./coupon-input";
 import { Button } from "@/components/ui/Button";
 import { X } from "lucide-react";
@@ -28,12 +29,23 @@ export function OrderSummary({ items }: OrderSummaryProps) {
         {items.map((item) => (
           <div key={item.productId} className="flex gap-3">
             <div className="relative h-12 w-12">
-              <Image
-                src={item.image}
-                alt={item.name}
-                fill
-                className="object-cover rounded"
-              />
+              {item.image.startsWith("http") ? (
+                <StoreImage
+                  src={item.image}
+                  alt={item.name}
+                  fill
+                  sizes="48px"
+                  className="object-cover rounded"
+                />
+              ) : (
+                <CldImage
+                  src={item.image}
+                  alt={item.name}
+                  fill
+                  crop={{ type: "thumb", source: true }}
+                  className="object-cover rounded"
+                />
+              )}
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium">{item.name}</p>

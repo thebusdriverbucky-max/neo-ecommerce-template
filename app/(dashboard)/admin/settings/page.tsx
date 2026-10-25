@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { getSettings, updateSettings, StoreSettingsData } from '@/app/actions/settings';
 import { getPages, updatePage, togglePageVisibility, ContentPageData, seedCMSPages } from '@/app/actions/cms';
 import { COUNTRIES as ALL_COUNTRIES, PRODUCT_CATEGORIES, DEFAULT_CATEGORIES } from '@/lib/constants';
+import { SITE_LANGUAGES, SUPPORTED_CURRENCIES } from '@/lib/settings-validation';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
@@ -13,21 +14,9 @@ import { toast } from 'sonner';
 import { Edit, Eye, EyeOff, Plus } from 'lucide-react';
 import { ProductImageUpload } from "@/components/admin/product-image-upload";
 
-// Hardcoded list of countries for now
-const COUNTRIES = [
-  { code: 'US', name: 'United States' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'CA', name: 'Canada' },
-  { code: 'AU', name: 'Australia' },
-  { code: 'DE', name: 'Germany' },
-  { code: 'FR', name: 'France' },
-  { code: 'ES', name: 'Spain' },
-  { code: 'IT', name: 'Italy' },
-  { code: 'NL', name: 'Netherlands' },
-  { code: 'UA', name: 'Ukraine' },
-];
+type FreeShippingMode = 'disabled' | 'always' | 'threshold';
 
-const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
+const CURRENCIES: string[] = [...SUPPORTED_CURRENCIES];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'general' | 'branding' | 'cms'>('general');
@@ -37,7 +26,12 @@ export default function SettingsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPage, setEditingPage] = useState<any | null>(null);
 
-  const { register, handleSubmit, setValue, watch, reset } = useForm<StoreSettingsData>();
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  // null = free shipping disabled; 0 = every order ships free.
+  const [freeShippingMode, setFreeShippingMode] = useState<FreeShippingMode>('threshold');
+  const [freeShippingAmount, setFreeShippingAmount] = useState('');
+
+  const { register, handleSubmit, setValue, watch } = useForm<StoreSettingsData>();
   const cmsForm = useForm<ContentPageData>();
 
   const loadSettings = useCallback(async () => {
@@ -50,9 +44,13 @@ export default function SettingsPage() {
       setValue('currency', data.currency);
       setValue('taxRate', data.taxRate);
       setValue('shippingCost', data.shippingCost);
-      setValue('freeShippingThreshold', data.freeShippingThreshold);
-      setValue('enabledCountries', data.enabledCountries);
-      setValue('enabledCategories', data.enabledCategories.length > 0 ? data.enabledCategories : DEFAULT_CATEGORIES);
+      const threshold = data.freeShippingThreshold;
+      setFreeShippingMode(threshold === null || threshold === undefined ? 'disabled' : threshold === 0 ? 'always' : 'threshold');
+      setFreeShippingAmount(threshold ? String(threshold) : '');
+      // Only known country names can be saved; ignore stale values.
+      const knownCountries = new Set<string>(ALL_COUNTRIES.map((c) => c.name));
+      setValue('enabledCountries', (data.enabledCountries || []).filter((name) => knownCountries.has(name)));
+      setValue('enabledCategories', (data.enabledCategories || []).length > 0 ? data.enabledCategories : DEFAULT_CATEGORIES);
       setValue('tiktokUrl', data.tiktokUrl || '');
       setValue('facebookUrl', data.facebookUrl || '');
       setValue('instagramUrl', data.instagramUrl || '');
@@ -87,18 +85,45 @@ export default function SettingsPage() {
 
 
   const onSettingsSubmit = (data: StoreSettingsData) => {
+    const clientErrors: Record<string, string> = {};
+    const isBlank = (value: unknown) => String(value ?? '').trim() === '';
+    const taxRate = Number(data.taxRate);
+    const shippingCost = Number(data.shippingCost);
+    if (isBlank(data.taxRate) || !Number.isFinite(taxRate)) clientErrors.taxRate = 'Enter a valid tax rate';
+    if (isBlank(data.shippingCost) || !Number.isFinite(shippingCost)) clientErrors.shippingCost = 'Enter a valid shipping cost';
+    let freeShippingThreshold: number | null = null;
+    if (freeShippingMode === 'always') {
+      freeShippingThreshold = 0;
+    } else if (freeShippingMode === 'threshold') {
+      freeShippingThreshold = Number(freeShippingAmount);
+      if (isBlank(freeShippingAmount) || !Number.isFinite(freeShippingThreshold) || freeShippingThreshold <= 0) {
+        clientErrors.freeShippingThreshold = 'Enter an amount greater than 0';
+      }
+    }
+    if (Object.keys(clientErrors).length > 0) {
+      setFieldErrors(clientErrors);
+      toast.error('Please correct the highlighted fields.');
+      return;
+    }
+
+    setFieldErrors({});
     startTransition(async () => {
-      const res = await updateSettings({
-        ...data,
-        taxRate: Number(data.taxRate),
-        shippingCost: Number(data.shippingCost),
-        freeShippingThreshold: Number(data.freeShippingThreshold),
-      });
-      if (res.success) {
-        toast.success('Settings updated successfully');
-        loadSettings();
-      } else {
-        toast.error(res.error || 'Failed to update settings');
+      try {
+        const res = await updateSettings({
+          ...data,
+          taxRate,
+          shippingCost,
+          freeShippingThreshold,
+        });
+        if (res.success) {
+          toast.success('Settings updated successfully');
+          loadSettings();
+        } else {
+          setFieldErrors(res.fieldErrors || {});
+          toast.error(res.error || 'Failed to update settings');
+        }
+      } catch {
+        toast.error('Could not reach the server. Check your connection and try again.');
       }
     });
   };
@@ -177,6 +202,9 @@ export default function SettingsPage() {
     }
   };
 
+  const fieldError = (name: string) =>
+    fieldErrors[name] ? <p className="text-xs text-red-600 mt-1">{fieldErrors[name]}</p> : null;
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Admin Settings</h1>
@@ -226,11 +254,12 @@ export default function SettingsPage() {
                 <div className="flex gap-2">
                   <Input
                     {...register('faviconUrl')}
-                    placeholder="https://i.imgur.com/..."
+                    placeholder="https://example.com/favicon.png"
                     className="flex-1"
                   />
                   <ProductImageUpload onUpload={url => setValue('faviconUrl', url, { shouldDirty: true })} />
                 </div>
+                {fieldError('faviconUrl')}
                 <p className="text-xs text-gray-400">Recommended: 32x32 or 64x64 PNG/ICO</p>
               </div>
 
@@ -239,11 +268,12 @@ export default function SettingsPage() {
                 <div className="flex gap-2">
                   <Input
                     {...register('ogImageUrl')}
-                    placeholder="https://res.cloudinary.com/..."
+                    placeholder="https://example.com/og-image.jpg"
                     className="flex-1"
                   />
                   <ProductImageUpload onUpload={url => setValue('ogImageUrl', url, { shouldDirty: true })} />
                 </div>
+                {fieldError('ogImageUrl')}
                 <p className="text-xs text-gray-400">Recommended: 1200x630 PNG/JPG for social sharing</p>
               </div>
             </div>
@@ -258,14 +288,17 @@ export default function SettingsPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Headline</label>
                 <Input {...register('heroTitle')} placeholder="Discover Our Latest Collection" />
+                {fieldError('heroTitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Subheadline</label>
                 <Input {...register('heroSubtitle')} placeholder="Shop the best products at unbeatable prices" />
+                {fieldError('heroSubtitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Button Text</label>
                 <Input {...register('heroButtonText')} placeholder="Shop Now" />
+                {fieldError('heroButtonText')}
               </div>
             </div>
           </div>
@@ -279,14 +312,17 @@ export default function SettingsPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">CTA Title</label>
                 <Input {...register('ctaTitle')} placeholder="Ready to Get Started?" />
+                {fieldError('ctaTitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">CTA Subtitle</label>
                 <Input {...register('ctaSubtitle')} placeholder="Join thousands of satisfied customers" />
+                {fieldError('ctaSubtitle')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">CTA Button Text</label>
                 <Input {...register('ctaButtonText')} placeholder="Browse Products" />
+                {fieldError('ctaButtonText')}
               </div>
             </div>
           </div>
@@ -299,6 +335,7 @@ export default function SettingsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Copyright Text</label>
               <Input {...register('footerCopyright')}
                 placeholder="© 2026 My Store. All rights reserved." />
+              {fieldError('footerCopyright')}
               <p className="text-xs text-gray-400 mt-1">
                 Leave empty to use default: © {new Date().getFullYear()} {settings?.storeName || 'Store'}. All rights reserved.
               </p>
@@ -319,6 +356,7 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
               <Input {...register('storeName')} placeholder="My Awesome Store" />
+              {fieldError('storeName')}
               <p className="text-xs text-gray-400 mt-1">
                 Displayed in emails and throughout the site
               </p>
@@ -326,6 +364,7 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Support Email</label>
               <Input type="email" {...register('storeEmail')} placeholder="support@mystore.com" />
+              {fieldError('storeEmail')}
               <p className="text-xs text-gray-400 mt-1">
                 Used in order confirmation emails and customer support
               </p>
@@ -339,12 +378,17 @@ export default function SettingsPage() {
                 {...register('currency')}
                 className="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                {CURRENCIES.map((c) => (
+                {(settings?.currency && !CURRENCIES.includes(settings.currency) ? [...CURRENCIES, settings.currency] : CURRENCIES).map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
                 ))}
               </select>
+              {fieldError('currency')}
+              <p className="text-xs text-amber-700 mt-1">
+                Changing the currency does not convert prices. Every product is relabelled with the new currency and
+                keeps its number, so update product prices and shipping amounts after switching.
+              </p>
             </div>
 
             <div>
@@ -353,15 +397,16 @@ export default function SettingsPage() {
                 {...register('siteLang')}
                 className="w-full border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="en">English (en)</option>
-                <option value="ru">Russian (ru)</option>
-                <option value="de">German (de)</option>
-                <option value="fr">French (fr)</option>
-                <option value="es">Spanish (es)</option>
+                {SITE_LANGUAGES.map((language) => (
+                  <option key={language.code} value={language.code}>
+                    {language.label}
+                  </option>
+                ))}
               </select>
               <p className="text-xs text-gray-400 mt-1">
                 Sets the lang attribute of the html tag
               </p>
+              {fieldError('siteLang')}
             </div>
           </div>
 
@@ -375,6 +420,7 @@ export default function SettingsPage() {
                 {...register('taxRate', { min: 0 })}
                 placeholder="0.00"
               />
+              {fieldError('taxRate')}
             </div>
 
             <div>
@@ -386,17 +432,42 @@ export default function SettingsPage() {
                 {...register('shippingCost', { min: 0 })}
                 placeholder="0.00"
               />
+              {fieldError('shippingCost')}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Free Shipping Threshold</label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                {...register('freeShippingThreshold', { min: 0 })}
-                placeholder="500.00"
-              />
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Free Shipping</label>
+              <select
+                value={freeShippingMode}
+                onChange={(e) => setFreeShippingMode(e.target.value as FreeShippingMode)}
+                className="w-full max-w-xs border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="disabled">Never (always charge shipping)</option>
+                <option value="threshold">From an order amount</option>
+                <option value="always">Always (every order ships free)</option>
+              </select>
+              {freeShippingMode === 'threshold' && (
+                <div className="mt-2 max-w-xs">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Free shipping threshold</label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    name="freeShippingThreshold"
+                    value={freeShippingAmount}
+                    onChange={(e) => setFreeShippingAmount(e.target.value)}
+                    placeholder="500.00"
+                  />
+                  {fieldError('freeShippingThreshold')}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-1">
+                {freeShippingMode === 'threshold'
+                  ? 'Orders whose subtotal (before discounts) reaches this amount ship free.'
+                  : freeShippingMode === 'always'
+                    ? 'Shipping is always free; the shipping cost above is never charged.'
+                    : 'Off: the shipping cost above is always charged.'}
+              </p>
             </div>
           </div>
 
@@ -404,14 +475,17 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">TikTok URL</label>
               <Input {...register('tiktokUrl')} placeholder="https://tiktok.com/@yourstore" />
+              {fieldError('tiktokUrl')}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Facebook URL</label>
               <Input {...register('facebookUrl')} placeholder="https://facebook.com/yourstore" />
+              {fieldError('facebookUrl')}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Instagram URL</label>
               <Input {...register('instagramUrl')} placeholder="https://instagram.com/yourstore" />
+              {fieldError('instagramUrl')}
             </div>
           </div>
 
@@ -454,6 +528,7 @@ export default function SettingsPage() {
                 </label>
               ))}
             </div>
+            {fieldError('enabledCountries')}
           </div>
 
           <div>
@@ -480,6 +555,7 @@ export default function SettingsPage() {
                 </label>
               ))}
             </div>
+            {fieldError('enabledCategories')}
           </div>
 
           <div className="border-t pt-6">
@@ -490,14 +566,17 @@ export default function SettingsPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">IBAN</label>
                 <Input {...register('paymentIban')} placeholder="CY00 0000 0000 0000 0000 0000 0000" />
+                {fieldError('paymentIban')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
                 <Input {...register('paymentBankName')} placeholder="Bank of Cyprus" />
+                {fieldError('paymentBankName')}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Account Holder</label>
                 <Input {...register('paymentAccountName')} />
+                {fieldError('paymentAccountName')}
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Payment / fallback instructions</label>
@@ -505,6 +584,7 @@ export default function SettingsPage() {
                   {...register('paymentDetails')}
                   placeholder="Thank you for your order. We will send you the payment instructions shortly."
                 />
+                {fieldError('paymentDetails')}
                 <p className="mt-1 text-xs text-gray-500">
                   With an IBAN, this appears below the bank details. Without an IBAN, it becomes the success-page payment message.
                 </p>

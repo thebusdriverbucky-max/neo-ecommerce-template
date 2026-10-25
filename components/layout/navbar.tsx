@@ -15,7 +15,7 @@ import { useSettings } from "@/components/providers/settings-provider";
 
 export function Navbar() {
   const { settings } = useSettings();
-  const storeName = settings?.storeName || process.env.NEXT_PUBLIC_STORE_NAME || 'Store';
+  const storeName = settings?.storeName?.trim() || 'Store';
   const pathname = usePathname();
   const { data: session } = useSession();
   const { getTotalItems } = useCart();

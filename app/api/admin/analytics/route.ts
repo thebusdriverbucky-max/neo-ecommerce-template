@@ -4,6 +4,16 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getStoreSettings } from "@/lib/store-settings";
+import { logger } from "@/lib/logger";
+import {
+  PAID_ORDER_STATUSES,
+  analyticsWindowStart,
+  averageOrderValue,
+  buildDailyRevenue,
+  toMoney,
+  type DailyRow,
+} from "@/lib/admin-analytics";
 
 export const dynamic = 'force-dynamic';
 
@@ -23,77 +33,76 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Total revenue
-    const orders = await db.order.findMany({
-      where: { status: "CONFIRMED" },
-    });
+    const settings = await getStoreSettings(db);
+    const currency = (settings?.currency || "USD").toUpperCase();
+    const paidStatuses = [...PAID_ORDER_STATUSES];
+    // Lite orders always carry a reservation; this matches the admin order list
+    // and keeps rows written by the Full edition on a shared database out.
+    const liteOrders = { reservationExpiresAt: { not: null } };
 
-    const totalRevenue = orders.reduce(
-      (sum, order) => sum + parseFloat(order.total.toString()),
-      0
-    );
+    const now = new Date();
+    const windowStart = analyticsWindowStart(now);
 
-    // Total orders
-    const totalOrders = await db.order.count();
+    const [paidTotals, otherCurrencyPaidOrders, statusGroups, recentOrders, totalProducts, dailyRows] =
+      await Promise.all([
+        // Money is only summed within the store currency; mixing currencies
+        // would produce a meaningless number.
+        db.order.aggregate({
+          where: { ...liteOrders, status: { in: paidStatuses }, currency },
+          _sum: { total: true },
+          _count: { _all: true },
+        }),
+        db.order.count({ where: { ...liteOrders, status: { in: paidStatuses }, currency: { not: currency } } }),
+        db.order.groupBy({ by: ["status"], where: liteOrders, _count: { _all: true } }),
+        db.order.count({ where: { ...liteOrders, createdAt: { gte: windowStart } } }),
+        db.product.count({ where: { isArchived: false } }),
+        // Bucketed by UTC date in the database.
+        db.$queryRaw<DailyRow[]>`
+          -- Prisma stores DateTime as a UTC timestamp without time zone; format
+          -- it directly so the bucket never depends on the session TimeZone.
+          SELECT to_char("createdAt", 'YYYY-MM-DD') AS day,
+                 SUM("total") AS total
+          FROM "Order"
+          WHERE "reservationExpiresAt" IS NOT NULL
+            AND "status"::text = ANY(${paidStatuses})
+            AND "currency" = ${currency}
+            AND "createdAt" >= ${windowStart}
+          GROUP BY 1
+          ORDER BY 1
+        `,
+      ]);
 
-    // Orders by status
-    const pendingOrders = await db.order.count({
-      where: { status: "PENDING" },
-    });
+    const totalRevenue = toMoney(paidTotals._sum.total);
+    const paidOrders = paidTotals._count._all;
+    const avgOrderValue = averageOrderValue(totalRevenue, paidOrders);
 
-    const confirmedOrders = await db.order.count({
-      where: { status: "CONFIRMED" },
-    });
+    const ordersByStatus: Record<string, number> = {};
+    let totalOrders = 0;
+    for (const group of statusGroups) {
+      ordersByStatus[group.status] = group._count._all;
+      totalOrders += group._count._all;
+    }
 
-    // Average order value
-    const avgOrderValue = totalOrders > 0 ? totalRevenue / confirmedOrders : 0;
-
-    // Revenue over time (last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const recentOrdersCount = await db.order.count({
-      where: {
-        createdAt: { gte: thirtyDaysAgo },
-      },
-    });
-
-    const totalProducts = await db.product.count({
-      where: { isArchived: false },
-    });
-
-    const recentOrdersData = await db.order.groupBy({
-      by: ["createdAt"],
-      where: {
-        status: "CONFIRMED",
-        createdAt: { gte: thirtyDaysAgo },
-      },
-      _sum: { total: true },
-      _count: true,
-    });
-
-    // Format revenue by date
-    const revenueByDate = recentOrdersData.reduce((acc: any, order) => {
-      const date = new Date(order.createdAt).toLocaleDateString();
-      if (!acc[date]) {
-        acc[date] = 0;
-      }
-      acc[date] += parseFloat(order._sum.total?.toString() || "0");
-      return acc;
-    }, {});
+    const dailyRevenue = buildDailyRevenue(dailyRows, now);
+    const revenueByDate = Object.fromEntries(dailyRevenue.map((entry) => [entry.date, entry.revenue]));
 
     return NextResponse.json({
-      totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+      currency,
+      totalRevenue,
+      paidOrders,
+      avgOrderValue,
+      otherCurrencyPaidOrders,
+      ordersByStatus,
+      dailyRevenue,
+      recentOrders,
       totalOrders,
-      avgOrderValue: parseFloat(avgOrderValue.toFixed(2)),
-      pendingOrders,
-      confirmedOrders,
-      revenueByDate,
       totalProducts,
-      recentOrders: recentOrdersCount,
+      pendingOrders: ordersByStatus.PENDING ?? 0,
+      confirmedOrders: ordersByStatus.CONFIRMED ?? 0,
+      revenueByDate,
     });
   } catch (error) {
-    console.error("Analytics error:", error);
+    logger.error("Analytics error");
     return NextResponse.json(
       { error: "Failed to fetch analytics" },
       { status: 500 }

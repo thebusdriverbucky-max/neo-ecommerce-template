@@ -3,10 +3,23 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { Button } from "@/components/ui/Button";
+import { StoreImage } from "@/components/ui/StoreImage";
 import { CheckCircle2, Package, Truck, CreditCard, MapPin, AlertCircle } from "lucide-react";
 import { formatPrice } from "@/lib/utils";
 import { verifyGuestOrderToken } from "@/lib/guest-order-token";
 import { paymentFallbackMessage } from "@/lib/payment-instructions";
+import { orderStatusLabel } from "@/lib/admin-orders";
+
+const STATUS_STYLES: Record<string, string> = {
+  PENDING: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+  DELIVERED: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+  CANCELLED: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+  REFUNDED: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+};
+
+function formatDate(value: Date) {
+  return value.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+}
 
 interface OrderDetailsPageProps {
   params: {
@@ -27,17 +40,15 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
     include: {
       items: {
         include: {
-          product: true,
+          product: { select: { name: true, image: true } },
         },
       },
       shippingAddress: true,
     },
   });
 
-  if (!order) {
-    notFound();
-  }
-  if (!(order as any).reservationExpiresAt) {
+  // Lite only shows bank-transfer orders (they always have a reservation).
+  if (!order?.reservationExpiresAt) {
     notFound();
   }
 
@@ -48,6 +59,16 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
   if (!isAdmin && !isOwner && !isGuestOrder) {
     redirect("/login");
   }
+
+  const reference = order.orderNumber || order.id;
+  const total = formatPrice(Number(order.total), order.currency);
+  const discount = Number(order.discountAmount ?? 0);
+  const overdue = order.status === "PENDING" && order.reservationExpiresAt.getTime() <= Date.now();
+  const bankRows = [
+    ["IBAN", order.paymentIban],
+    ["Bank", order.paymentBankName],
+    ["Account name", order.paymentAccountName],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -78,11 +99,8 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <span className={`px-3 py-1 rounded-full text-sm font-medium ${order.status === 'DELIVERED' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-            order.status === 'CANCELLED' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-              'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-            }`}>
-            {order.status}
+          <span className={`px-3 py-1 rounded-full text-sm font-medium ${STATUS_STYLES[order.status] ?? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"}`}>
+            {orderStatusLabel(order.status)}
           </span>
         </div>
       </div>
@@ -98,11 +116,13 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
               {order.items.map((item) => (
                 <div key={item.id} className="p-4 flex gap-4">
-                  <div className="w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden flex-shrink-0">
-                    <img
+                  <div className="relative w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-lg overflow-hidden flex-shrink-0">
+                    <StoreImage
                       src={item.product.image}
                       alt={item.product.name}
-                      className="w-full h-full object-cover"
+                      fill
+                      sizes="80px"
+                      className="object-cover"
                     />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -128,21 +148,34 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
         </div>
 
         <div className="space-y-6">
-          {order.status === "PENDING" && (order as any).paymentIban && (
+          {order.status === "PENDING" && order.paymentIban && (
             <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800 p-4 text-sm space-y-2">
               <h3 className="font-semibold">Bank transfer instructions</h3>
-              <p><span className="font-medium">IBAN:</span> {(order as any).paymentIban}</p>
-              <p><span className="font-medium">Bank:</span> {(order as any).paymentBankName}</p>
-              <p><span className="font-medium">Account:</span> {(order as any).paymentAccountName}</p>
-              <p className="whitespace-pre-line">{(order as any).paymentDetails}</p>
-              <p className="font-medium">Transfer exactly {formatPrice(Number(order.total), order.currency)} and include {order.orderNumber || order.id}.</p>
-              <p className="text-gray-600 dark:text-gray-400">Reservation expires after 7 days. Late payments require manual support review.</p>
+              {bankRows.map(([label, value]) => (
+                <p key={label} className="break-all"><span className="font-medium">{label}:</span> {value}</p>
+              ))}
+              {order.paymentDetails && <p className="whitespace-pre-line">{order.paymentDetails}</p>}
+              <p className="font-medium">Transfer exactly {total} and use <span className="font-mono">{reference}</span> as the payment reference.</p>
+              <p className="text-gray-600 dark:text-gray-400">
+                {overdue
+                  ? "The reservation period has ended. If you already sent the transfer, we will confirm the order once it arrives, as long as the items are still in stock."
+                  : `Your items are reserved until ${formatDate(order.reservationExpiresAt)}. We confirm the order after the payment arrives.`}
+              </p>
             </div>
           )}
-          {order.status === "PENDING" && !(order as any).paymentIban && (
+          {order.status === "PENDING" && !order.paymentIban && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
               <h3 className="mb-2 font-semibold">Payment instructions</h3>
-              <p className="whitespace-pre-line">{paymentFallbackMessage((order as any).paymentDetails)}</p>
+              <p className="whitespace-pre-line">{paymentFallbackMessage(order.paymentDetails)}</p>
+            </div>
+          )}
+          {order.status === "CANCELLED" && order.reservationExpiredAt && (
+            <div className="flex gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-100">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <p>
+                This order was cancelled because no payment arrived by {formatDate(order.reservationExpiresAt)}.
+                If you already sent {total}, <Link href="/contact" className="underline">contact us</Link> with reference <span className="font-mono">{reference}</span>.
+              </p>
             </div>
           )}
           {/* Summary */}
@@ -156,6 +189,12 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
                 <span className="text-gray-500 dark:text-gray-400">Subtotal</span>
                 <span>{formatPrice(Number(order.subtotal), order.currency)}</span>
               </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-sm text-green-700 dark:text-green-400">
+                  <span>Discount{order.discountCode ? ` (${order.discountCode})` : ""}</span>
+                  <span>-{formatPrice(discount, order.currency)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500 dark:text-gray-400">Shipping</span>
                 <span>{formatPrice(Number(order.shippingCost), order.currency)}</span>
@@ -166,7 +205,7 @@ export default async function OrderDetailsPage({ params, searchParams }: OrderDe
               </div>
               <div className="pt-3 border-t border-gray-200 dark:border-gray-700 flex justify-between font-bold text-lg">
                 <span>Total</span>
-                <span>{formatPrice(Number(order.total), order.currency)}</span>
+                <span>{total}</span>
               </div>
             </div>
           </div>

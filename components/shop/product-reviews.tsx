@@ -12,7 +12,11 @@ import { Textarea } from "@/components/ui/Textarea";
 
 const reviewSchema = z.object({
   rating: z.number().min(1, "Please select a rating").max(5),
-  comment: z.string().min(5, "Comment must be at least 5 characters long"),
+  comment: z
+    .string()
+    .trim()
+    .min(5, "Comment must be at least 5 characters long")
+    .max(2000, "Comment must be 2000 characters or fewer"),
 });
 
 type ReviewFormValues = z.infer<typeof reviewSchema>;
@@ -30,9 +34,11 @@ interface Review {
 
 interface ProductReviewsProps {
   productId: string;
+  /** Archived products keep their reviews visible but accept no new ones. */
+  readOnly?: boolean;
 }
 
-export const ProductReviews = ({ productId }: ProductReviewsProps) => {
+export const ProductReviews = ({ productId, readOnly = false }: ProductReviewsProps) => {
   const { data: session } = useSession();
   const [reviews, setReviews] = useState<Review[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,13 +85,17 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
         body: JSON.stringify(data),
       });
 
-      if (!res.ok) throw new Error("Failed to submit review");
+      if (!res.ok) {
+        // Show the server's validation or duplicate message when it sent one.
+        const payload = await res.json().catch(() => null);
+        throw new Error(typeof payload?.error === "string" ? payload.error : "Failed to add review");
+      }
 
       toast.success("Review added successfully!");
       form.reset();
       fetchReviews();
     } catch (error) {
-      toast.error("Failed to add review");
+      toast.error(error instanceof Error ? error.message : "Failed to add review");
     } finally {
       setIsSubmitting(false);
     }
@@ -134,7 +144,11 @@ export const ProductReviews = ({ productId }: ProductReviewsProps) => {
         </span>
       </div>
 
-      {session ? (
+      {readOnly ? (
+        <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg text-center">
+          <p>This product is no longer available, so new reviews are closed.</p>
+        </div>
+      ) : session ? (
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 border dark:border-gray-700 p-4 rounded-lg">
           <h3 className="text-lg font-semibold">Leave a review</h3>
 

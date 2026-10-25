@@ -115,7 +115,7 @@
       "secret": true,
       "scope": "server",
       "valueGroup": null,
-      "description": "NextAuth session signing secret; also the fallback guest-order token secret.",
+      "description": "NextAuth session signing secret. Not used for guest order links; those require GUEST_ORDER_TOKEN_SECRET.",
       "providerDocsUrl": "https://authjs.dev/getting-started/deployment",
       "validation": {
         "type": "string",
@@ -190,7 +190,7 @@
       "secret": false,
       "scope": "server",
       "valueGroup": null,
-      "description": "Administrator identity and store-notification recipient. Register or sign in with this address to receive admin access.",
+      "description": "Administrator identity. Register or sign in with this address to receive admin access. Also the fallback recipient for order, contact-form and low-stock emails when no store email is set in Admin Settings.",
       "providerDocsUrl": null,
       "validation": {
         "type": "email"
@@ -204,7 +204,7 @@
       "secret": true,
       "scope": "server",
       "valueGroup": null,
-      "description": "Independent random secret of at least 32 characters for signed guest order links; required for guest checkout.",
+      "description": "Independent random secret of at least 32 characters for signed guest order links; required for guest checkout. NEXTAUTH_SECRET is not a fallback.",
       "providerDocsUrl": null,
       "validation": {
         "type": "string",
@@ -249,7 +249,7 @@
       "secret": true,
       "scope": "server",
       "valueGroup": "resend-email",
-      "description": "Resend API key for password recovery and store notifications.",
+      "description": "Resend API key for password recovery and store notifications. Without it no email is sent.",
       "providerDocsUrl": "https://resend.com/docs/dashboard/api-keys/introduction",
       "validation": {
         "type": "string",
@@ -266,7 +266,7 @@
       "secret": false,
       "scope": "server",
       "valueGroup": "resend-email",
-      "description": "Verified sender used when Resend delivery is enabled.",
+      "description": "Sender used for Resend delivery. Use an address on a verified domain: the default onboarding@resend.dev can only deliver to the Resend account owner.",
       "providerDocsUrl": "https://resend.com/docs/dashboard/domains/introduction",
       "validation": {
         "type": "email-or-mailbox"
@@ -336,35 +336,6 @@
       "defaultAvailable": false
     },
     {
-      "name": "NEXT_PUBLIC_STORE_NAME",
-      "required": false,
-      "feature": "presentation-fallbacks",
-      "secret": false,
-      "scope": "client",
-      "valueGroup": null,
-      "description": "Optional store-name fallback when CMS settings are unavailable.",
-      "providerDocsUrl": null,
-      "validation": {
-        "type": "string",
-        "minLength": 1
-      },
-      "defaultAvailable": true
-    },
-    {
-      "name": "STORE_SUPPORT_EMAIL",
-      "required": false,
-      "feature": "presentation-fallbacks",
-      "secret": false,
-      "scope": "server",
-      "valueGroup": null,
-      "description": "Optional support-address fallback used in order emails.",
-      "providerDocsUrl": null,
-      "validation": {
-        "type": "email"
-      },
-      "defaultAvailable": true
-    },
-    {
       "name": "NEXT_PUBLIC_SUPPORT_EMAIL",
       "required": false,
       "feature": "presentation-fallbacks",
@@ -375,22 +346,6 @@
       "providerDocsUrl": null,
       "validation": {
         "type": "email"
-      },
-      "defaultAvailable": true
-    },
-    {
-      "name": "NEXT_PUBLIC_CURRENCY_SYMBOL",
-      "required": false,
-      "feature": "presentation-fallbacks",
-      "secret": false,
-      "scope": "client",
-      "valueGroup": null,
-      "description": "Optional email and UI currency-symbol fallback; payment currency remains server controlled.",
-      "providerDocsUrl": null,
-      "validation": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 8
       },
       "defaultAvailable": true
     },

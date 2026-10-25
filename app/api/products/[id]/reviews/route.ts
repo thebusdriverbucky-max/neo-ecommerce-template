@@ -4,6 +4,13 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { revalidatePath } from "next/cache";
+import { logger } from "@/lib/logger";
+import { reviewSchema } from "@/lib/review-schema";
+import { recalculateProductRating } from "@/lib/product-rating";
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+}
 
 export async function GET(
   req: Request,
@@ -32,7 +39,7 @@ export async function GET(
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
-    console.error("[REVIEWS_GET]", error);
+    logger.error("Failed to load reviews");
     return new NextResponse("Internal Error", { status: 500 });
   }
 }
@@ -56,40 +63,42 @@ export async function POST(
       );
     }
 
-    const { rating, comment } = z.object({
-      rating: z.number().int().min(1).max(5),
-      comment: z.string().trim().min(1).max(5000),
-    }).parse(await req.json());
+    const parsed = reviewSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of parsed.error.issues) fieldErrors[String(issue.path[0] ?? "form")] ??= issue.message;
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid input", fieldErrors },
+        { status: 400 },
+      );
+    }
+    const { rating, title, comment } = parsed.data;
 
-    const review = await db.review.create({
-      data: {
-        rating,
-        comment,
-        productId: params.id,
-        userId: session.user.id!,
-      },
+    const product = await db.product.findUnique({
+      where: { id: params.id },
+      select: { id: true, slug: true, isArchived: true },
+    });
+    // Archived products are hidden from the storefront, so they look missing.
+    if (!product || product.isArchived) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+
+    // The review and the cached product rating change together.
+    const review = await db.$transaction(async (tx) => {
+      const created = await tx.review.create({
+        data: {
+          rating,
+          title: title || null,
+          comment,
+          productId: product.id,
+          userId: session.user!.id!,
+        },
+      });
+      await recalculateProductRating(tx, product.id);
+      return created;
     });
 
-    // Update product rating
-    const reviews = await db.review.findMany({
-      where: {
-        productId: params.id,
-      },
-    });
-
-    const totalRating = reviews.reduce((acc: number, review: any) => acc + review.rating, 0);
-    const averageRating = totalRating / reviews.length;
-
-    await db.product.update({
-      where: {
-        id: params.id,
-      },
-      data: {
-        rating: averageRating,
-      },
-    });
-
-    revalidatePath(`/products/${params.id}`);
+    revalidatePath(`/products/${product.slug}`);
     revalidatePath("/products");
 
     return NextResponse.json(review);
@@ -97,7 +106,11 @@ export async function POST(
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
-    console.error("[REVIEWS_POST]", error);
+    // One review per user and product (unique constraint).
+    if (errorCode(error) === "P2002") {
+      return NextResponse.json({ error: "You have already reviewed this product" }, { status: 409 });
+    }
+    logger.error("Failed to save review");
     return new NextResponse("Internal Error", { status: 500 });
   }
 }
@@ -120,40 +133,31 @@ export async function DELETE(
       return new NextResponse("Review ID is required", { status: 400 });
     }
 
-    await db.review.delete({
-      where: {
-        id: reviewId,
-      },
+    const review = await db.review.findUnique({
+      where: { id: reviewId },
+      select: { id: true, productId: true, product: { select: { slug: true } } },
+    });
+    // The review must belong to the product in the URL, otherwise the wrong
+    // product's rating would be recalculated.
+    if (!review || review.productId !== params.id) {
+      return NextResponse.json({ error: "Review not found" }, { status: 404 });
+    }
+
+    await db.$transaction(async (tx) => {
+      await tx.review.delete({ where: { id: review.id } });
+      await recalculateProductRating(tx, review.productId);
     });
 
-    // Update product rating
-    const reviews = await db.review.findMany({
-      where: {
-        productId: params.id,
-      },
-    });
-
-    const totalRating = reviews.reduce((acc: number, review: any) => acc + review.rating, 0);
-    const averageRating = reviews.length > 0 ? totalRating / reviews.length : 0;
-
-    await db.product.update({
-      where: {
-        id: params.id,
-      },
-      data: {
-        rating: averageRating,
-      },
-    });
-
-    revalidatePath(`/products/${params.id}`);
+    revalidatePath(`/products/${review.product.slug}`);
     revalidatePath("/products");
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    if (error instanceof z.ZodError || error instanceof SyntaxError) {
-      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    // Deleted concurrently between the lookup and the delete.
+    if (errorCode(error) === "P2025") {
+      return NextResponse.json({ error: "Review not found" }, { status: 404 });
     }
-    console.error("[REVIEWS_DELETE]", error);
+    logger.error("Failed to delete review");
     return new NextResponse("Internal Error", { status: 500 });
   }
 }

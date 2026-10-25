@@ -4,43 +4,48 @@ import { db as prisma } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/lib/auth';
 import { DEFAULT_PAYMENT_FALLBACK_MESSAGE } from '@/lib/payment-instructions';
+import { DEFAULT_STORE_SETTINGS_ID, getStoreSettings } from '@/lib/store-settings';
+import { DEFAULT_FREE_SHIPPING_THRESHOLD } from '@/lib/shipping';
+import { settingsFieldErrors, settingsSchemaFor } from '@/lib/settings-validation';
+import { logger } from '@/lib/logger';
 
 export interface StoreSettingsData {
-  storeName?: string;
-  storeEmail?: string;
+  storeName?: string | null;
+  storeEmail?: string | null;
   currency: string;
   taxRate: number;
   shippingCost: number;
-  freeShippingThreshold: number;
+  // null disables free shipping; 0 makes every order ship free.
+  freeShippingThreshold: number | null;
   enabledCountries: string[];
   enabledCategories: string[];
-  tiktokUrl?: string;
-  facebookUrl?: string;
-  instagramUrl?: string;
-  heroTitle?: string;
-  heroSubtitle?: string;
-  heroButtonText?: string;
-  ctaTitle?: string;
-  ctaSubtitle?: string;
-  ctaButtonText?: string;
-  footerCopyright?: string;
-  faviconUrl?: string;
-  ogImageUrl?: string;
-  siteLang?: string;
-  paymentIban?: string;
-  paymentBankName?: string;
-  paymentAccountName?: string;
-  paymentDetails?: string;
+  tiktokUrl?: string | null;
+  facebookUrl?: string | null;
+  instagramUrl?: string | null;
+  heroTitle?: string | null;
+  heroSubtitle?: string | null;
+  heroButtonText?: string | null;
+  ctaTitle?: string | null;
+  ctaSubtitle?: string | null;
+  ctaButtonText?: string | null;
+  footerCopyright?: string | null;
+  faviconUrl?: string | null;
+  ogImageUrl?: string | null;
+  siteLang?: string | null;
+  paymentIban?: string | null;
+  paymentBankName?: string | null;
+  paymentAccountName?: string | null;
+  paymentDetails?: string | null;
 }
 
 export async function getSettings() {
   try {
-    const settings = await prisma.storeSettings.findFirst() || {
+    const settings = await getStoreSettings(prisma) || {
       id: null,
       currency: 'USD',
       taxRate: 0,
       shippingCost: 0,
-      freeShippingThreshold: 500,
+      freeShippingThreshold: DEFAULT_FREE_SHIPPING_THRESHOLD,
       enabledCountries: [],
       enabledCategories: [],
       paymentIban: null,
@@ -56,104 +61,90 @@ export async function getSettings() {
       },
     };
   } catch (error) {
-    console.error('Error fetching settings:', error);
+    logger.error('Failed to fetch settings');
     return { success: false, error: 'Failed to fetch settings' };
   }
 }
 
-export async function updateSettings(data: StoreSettingsData) {
+export interface UpdateSettingsResult {
+  success: boolean;
+  error?: string;
+  fieldErrors?: Record<string, string>;
+}
+
+export async function updateSettings(data: StoreSettingsData): Promise<UpdateSettingsResult> {
   try {
     const session = await auth();
     if (session?.user?.role !== 'ADMIN') {
       return { success: false, error: 'Unauthorized' };
     }
 
-    const currency = data.currency?.trim().toUpperCase();
-    const taxRate = Number(data.taxRate);
-    const shippingCost = Number(data.shippingCost);
-    const freeShippingThreshold = Number(data.freeShippingThreshold);
+    const settings = await getStoreSettings(prisma);
+    const storedCurrency = settings?.currency ?? 'USD';
 
-    if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
-      return { success: false, error: 'Invalid currency or tax rate' };
+    const parsed = settingsSchemaFor(storedCurrency).safeParse(data);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error: 'Please correct the highlighted fields.',
+        fieldErrors: settingsFieldErrors(parsed.error.issues),
+      };
     }
-    if (!Number.isFinite(shippingCost) || shippingCost < 0) {
-      return { success: false, error: 'Shipping cost must be zero or greater' };
-    }
-    if (!Number.isFinite(freeShippingThreshold) || freeShippingThreshold < 0) {
-      return { success: false, error: 'Free shipping threshold must be zero or greater' };
-    }
+    const values = parsed.data;
 
-    const settings = await prisma.storeSettings.findFirst();
+    // Omitted keys stay unchanged (Prisma ignores undefined); null/"" clears.
+    const fields = {
+      storeName: values.storeName,
+      storeEmail: values.storeEmail,
+      currency: values.currency,
+      taxRate: values.taxRate,
+      shippingCost: values.shippingCost,
+      freeShippingThreshold: values.freeShippingThreshold,
+      enabledCountries: values.enabledCountries,
+      enabledCategories: values.enabledCategories,
+      tiktokUrl: values.tiktokUrl,
+      facebookUrl: values.facebookUrl,
+      instagramUrl: values.instagramUrl,
+      heroTitle: values.heroTitle,
+      heroSubtitle: values.heroSubtitle,
+      heroButtonText: values.heroButtonText,
+      ctaTitle: values.ctaTitle,
+      ctaSubtitle: values.ctaSubtitle,
+      ctaButtonText: values.ctaButtonText,
+      footerCopyright: values.footerCopyright,
+      faviconUrl: values.faviconUrl,
+      ogImageUrl: values.ogImageUrl,
+      siteLang: values.siteLang,
+      paymentIban: values.paymentIban,
+      paymentBankName: values.paymentBankName,
+      paymentAccountName: values.paymentAccountName,
+      paymentDetails: values.paymentDetails,
+    };
+
+    const currencyChanged = storedCurrency !== values.currency;
 
     await prisma.$transaction(async (tx) => {
       if (settings) {
-        await tx.storeSettings.update({
-          where: { id: settings.id },
-          data: {
-            storeName: data.storeName,
-            storeEmail: data.storeEmail,
-            currency,
-            taxRate,
-            shippingCost,
-            freeShippingThreshold,
-            enabledCountries: data.enabledCountries,
-            enabledCategories: data.enabledCategories,
-            tiktokUrl: data.tiktokUrl,
-            facebookUrl: data.facebookUrl,
-            instagramUrl: data.instagramUrl,
-            heroTitle: data.heroTitle,
-            heroSubtitle: data.heroSubtitle,
-            heroButtonText: data.heroButtonText,
-            ctaTitle: data.ctaTitle,
-            ctaSubtitle: data.ctaSubtitle,
-            ctaButtonText: data.ctaButtonText,
-            footerCopyright: data.footerCopyright,
-            faviconUrl: data.faviconUrl,
-            ogImageUrl: data.ogImageUrl,
-            siteLang: data.siteLang,
-            paymentIban: data.paymentIban,
-            paymentBankName: data.paymentBankName,
-            paymentAccountName: data.paymentAccountName,
-            paymentDetails: data.paymentDetails,
-          } as any,
-        });
+        await tx.storeSettings.update({ where: { id: settings.id }, data: fields });
       } else {
-        await tx.storeSettings.create({
-          data: {
-            storeName: data.storeName,
-            storeEmail: data.storeEmail,
-            currency,
-            taxRate,
-            shippingCost,
-            freeShippingThreshold,
-            enabledCountries: data.enabledCountries,
-            enabledCategories: data.enabledCategories,
-            tiktokUrl: data.tiktokUrl,
-            facebookUrl: data.facebookUrl,
-            instagramUrl: data.instagramUrl,
-            heroTitle: data.heroTitle,
-            heroSubtitle: data.heroSubtitle,
-            heroButtonText: data.heroButtonText,
-            ctaTitle: data.ctaTitle,
-            ctaSubtitle: data.ctaSubtitle,
-            ctaButtonText: data.ctaButtonText,
-            footerCopyright: data.footerCopyright,
-            faviconUrl: data.faviconUrl,
-            ogImageUrl: data.ogImageUrl,
-            siteLang: data.siteLang,
-            paymentIban: data.paymentIban,
-            paymentBankName: data.paymentBankName,
-            paymentAccountName: data.paymentAccountName,
-            paymentDetails: data.paymentDetails,
-          } as any,
+        await tx.storeSettings.upsert({
+          where: { id: DEFAULT_STORE_SETTINGS_ID },
+          create: { id: DEFAULT_STORE_SETTINGS_ID, ...fields },
+          update: fields,
         });
+      }
+
+      // Checkout rejects orders when a product currency differs from the
+      // store currency. Prices are NOT converted, only relabelled.
+      if (currencyChanged) {
+        await tx.product.updateMany({ data: { currency: values.currency } });
       }
     });
 
     revalidatePath('/', 'layout');
     return { success: true };
   } catch (error) {
-    console.error('Error updating settings:', error);
+    logger.error('Failed to update settings');
     return { success: false, error: 'Failed to update settings' };
   }
 }

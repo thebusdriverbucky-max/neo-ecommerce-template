@@ -53,7 +53,9 @@ test("actual product POST/PUT enforce admin, validate, serialize Decimal and exp
   };
   const load = moduleLoader({
     "@/lib/auth": { auth: async () => ({ user: { role } }) },
-    "@/lib/db": { db: { product: { create: write, update: write }, storeSettings: { findFirst: async () => ({ currency: "EUR" }) } } },
+    // PUT re-arms low-stock alerts after saving (stock may have been raised).
+    "@/lib/email": { sendLowStockEmail: async () => {} },
+    "@/lib/db": { db: { product: { create: write, update: write, findUnique: async () => ({ slug: "test-product" }), findMany: async () => [] }, storeSettings: { findFirst: async () => ({ currency: "EUR" }) } } },
     "next/cache": { revalidatePath: (value: string) => paths.push(value) },
   });
   const { POST } = load("app/api/products/route.ts");
@@ -100,6 +102,8 @@ test("archived products are not exposed by public list/detail APIs", async () =>
   let role = "CUSTOMER";
   let reads = 0;
   const load = moduleLoader({
+    "@/lib/reservation-cleanup": { releaseExpiredReservationsForStorefront: async () => {} },
+    "@/lib/email": { sendLowStockEmail: async () => {} },
     "@/lib/auth": { auth: async () => ({ user: { role } }) },
     "@/lib/db": { db: { product: {
       findMany: async () => { reads++; return []; },

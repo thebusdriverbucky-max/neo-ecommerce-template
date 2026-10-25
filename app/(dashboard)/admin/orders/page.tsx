@@ -2,188 +2,85 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
-import { Dialog } from "@/components/ui/Dialog";
-import { Select } from "@/components/ui/Select";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import OrdersTable from "@/components/admin/OrdersTable";
-import { formatPrice } from "@/lib/utils";
+import Pagination from "@/components/admin/Pagination";
+import OrdersTable, { type AdminOrder } from "@/components/admin/OrdersTable";
+import OrderDetailsModal from "@/components/admin/OrderDetailsModal";
+import { ORDER_STATUSES, orderStatusLabel } from "@/lib/admin-orders";
 
-interface Order {
-  id: string;
-  orderNumber?: string | null;
-  user?: { email: string; name: string } | null;
-  guestEmail?: string | null;
-  shippingAddress?: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string;
-    street: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    country: string;
-  } | null;
-  status: string;
-  total: string | number;
-  currency: string;
-  createdAt: string;
-  items: Array<{
-    product: { name: string };
-    quantity: number;
-    price: string | number;
-  }>;
-  trackingNumber?: string | null;
-  reservationExpiredAt?: string | null;
-  paymentConfirmedAt?: string | null;
-}
+const ORDERS_PER_PAGE = 25;
 
-const nextStatuses: Record<string, Array<{ value: string; label: string }>> = {
-  PENDING: [
-    { value: "CONFIRMED", label: "Confirm bank payment received" },
-    { value: "CANCELLED", label: "Cancel and release stock" },
-  ],
-  CONFIRMED: [
-    { value: "PROCESSING", label: "Processing" },
-    { value: "CANCELLED", label: "Externally refund, cancel and release stock" },
-    { value: "REFUNDED", label: "External refund complete; release stock" },
-  ],
-  PROCESSING: [
-    { value: "SHIPPED", label: "Shipped" },
-    { value: "CANCELLED", label: "Externally refund, cancel and release stock" },
-    { value: "REFUNDED", label: "External refund complete; release stock" },
-  ],
-  SHIPPED: [{ value: "DELIVERED", label: "Delivered" }, { value: "REFUNDED", label: "Refunded" }],
-  DELIVERED: [{ value: "REFUNDED", label: "Refunded" }],
-  PARTIALLY_REFUNDED: [{ value: "REFUNDED", label: "Fully refunded" }],
-};
+const statusFilterOptions = ORDER_STATUSES.map((value) => ({ value, label: orderStatusLabel(value) }));
 
 export default function AdminOrdersPage() {
-  const { data: session } = useSession();
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [statusDialogOpen, setStatusDialogOpen] = useState(false);
-  const [newStatus, setNewStatus] = useState("");
-  const [trackingNumber, setTrackingNumber] = useState("");
+  const [listError, setListError] = useState("");
+  const [selectedOrder, setSelectedOrder] = useState<AdminOrder | null>(null);
+  const requestId = useRef(0);
 
-  const [currentPage, setCurrentPage] = useState(1);
-  const ORDERS_PER_PAGE = 50;
-  const totalPages = Math.ceil(orders.length / ORDERS_PER_PAGE);
-  const paginatedOrders = orders.slice(
-    (currentPage - 1) * ORDERS_PER_PAGE,
-    currentPage * ORDERS_PER_PAGE
-  );
+  const totalPages = Math.max(1, Math.ceil(total / ORDERS_PER_PAGE));
 
-  // УБРАНА ПРОВЕРКА - middleware проверяет!
+  const fetchOrders = useCallback(async (): Promise<AdminOrder[]> => {
+    const current = ++requestId.current;
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(ORDERS_PER_PAGE) });
+      if (statusFilter) params.set("status", statusFilter);
+      if (searchQuery) params.set("q", searchQuery);
+      const response = await fetch(`/api/orders?${params}`);
+      const data = await response.json().catch(() => null);
+      if (current !== requestId.current) return [];
+      if (!response.ok || !data || !Array.isArray(data.orders)) {
+        throw new Error(data?.error || `Could not load orders (HTTP ${response.status}).`);
+      }
+      const lastPage = Math.max(1, Math.ceil(data.total / ORDERS_PER_PAGE));
+      if (data.orders.length === 0 && data.total > 0 && page > lastPage) {
+        setPage(lastPage);
+        return [];
+      }
+      setOrders(data.orders);
+      setTotal(data.total);
+      setListError("");
+      return data.orders;
+    } catch (error) {
+      if (current === requestId.current) {
+        setListError(error instanceof Error ? error.message : "Could not load orders. Check your connection and retry.");
+      }
+      return [];
+    } finally {
+      if (current === requestId.current) setLoading(false);
+    }
+  }, [page, statusFilter, searchQuery]);
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    void fetchOrders();
+  }, [fetchOrders]);
 
-  const fetchOrders = async () => {
-    try {
-      const response = await fetch("/api/orders");
-      const data = await response.json();
-      setOrders(data);
-      setCurrentPage(1);
-    } catch (error) {
-      console.error("Failed to fetch orders:", error);
-    } finally {
-      setLoading(false);
+  // Keeps the open order in sync after a change. The list may no longer
+  // contain it (e.g. a status filter), so the API response fills the gap.
+  const handleOrderChanged = async (orderId: string, updated: Partial<AdminOrder> | null) => {
+    if (updated) {
+      setSelectedOrder((current) => (current?.id === orderId ? { ...current, ...updated } : current));
+    }
+    const refreshed = (await fetchOrders()).find((order) => order.id === orderId);
+    if (refreshed) {
+      setSelectedOrder((current) => (current?.id === orderId ? refreshed : current));
     }
   };
 
-  const handleStatusUpdate = async () => {
-    if (!selectedOrder || !newStatus) return;
-
-    if (["CANCELLED", "REFUNDED"].includes(newStatus) && selectedOrder.status !== "PENDING") {
-      const confirmed = window.confirm("This app does not transfer money. Continue only after any required bank refund is complete and the goods should return to available stock.");
-      if (!confirmed) return;
-    }
-
-    try {
-      const response = await fetch(`/api/orders/${selectedOrder.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: newStatus,
-          trackingNumber: trackingNumber || undefined
-        }),
-      });
-
-      if (response.ok) {
-        await fetchOrders();
-        setStatusDialogOpen(false);
-        setNewStatus("");
-        setTrackingNumber("");
-      }
-    } catch (error) {
-      console.error("Failed to update order status:", error);
-    }
+  const applyFilters = (event: React.FormEvent) => {
+    event.preventDefault();
+    setPage(1);
+    setSearchQuery(searchInput.trim());
   };
-
-  const handleViewDetails = (order: Order) => {
-    setSelectedOrder(order);
-    setDetailsOpen(true);
-  };
-
-  const openStatusDialog = () => {
-    if (selectedOrder) {
-      const options = selectedOrder.status === "CANCELLED" && selectedOrder.reservationExpiredAt
-        ? [{ value: "PENDING", label: "Recover late payment: reserve stock again" }]
-        : nextStatuses[selectedOrder.status] || [];
-      setNewStatus(options[0]?.value || "");
-      setTrackingNumber(selectedOrder.trackingNumber || "");
-      setStatusDialogOpen(true);
-    }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const getCustomerName = (order: Order) => {
-    if (order.user?.name) return order.user.name;
-    if (order.shippingAddress) {
-      return `${order.shippingAddress.firstName} ${order.shippingAddress.lastName}`;
-    }
-    return "Guest Customer";
-  };
-
-  const getCustomerEmail = (order: Order) => {
-    return order.user?.email || order.guestEmail || "No email";
-  };
-
-  const getPageNumbers = () => {
-    if (totalPages <= 5) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    }
-
-    if (currentPage <= 3) {
-      return [1, 2, 3, 4, "...", totalPages];
-    }
-
-    if (currentPage >= totalPages - 2) {
-      return [1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-    }
-
-    return [1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages];
-  };
-
-  if (loading) {
-    return <div className="text-center py-12">Loading...</div>;
-  }
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -191,171 +88,69 @@ export default function AdminOrdersPage() {
         Order <span className="text-primary">Management</span>
       </h1>
 
+      <form onSubmit={applyFilters} className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="sm:w-56">
+          <label htmlFor="statusFilter" className="block text-sm font-medium mb-2">Status</label>
+          <select
+            id="statusFilter"
+            name="statusFilter"
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
+            className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+          >
+            <option value="">All statuses</option>
+            {statusFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex-1">
+          <Input
+            label="Search"
+            name="orderSearch"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Order number or customer email"
+          />
+        </div>
+        <Button type="submit" variant="outline">
+          Search
+        </Button>
+      </form>
+
       <p className="text-xs text-gray-400 text-center mt-2 mb-3 md:hidden">
         ← Scroll left/right to see all actions →
       </p>
 
-      <OrdersTable orders={paginatedOrders} onViewDetails={handleViewDetails} />
-
-      {totalPages > 1 && (
-        <div className="mt-6 flex flex-col items-center gap-4">
-          <div className="flex justify-center gap-1 items-center">
-            <Button
-              variant="outline"
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-            >
-              &larr; Prev
-            </Button>
-
-            {getPageNumbers().map((page, index) => {
-              if (page === "...") {
-                return (
-                  <span key={`ellipsis-${index}`} className="px-2 text-gray-500">
-                    ...
-                  </span>
-                );
-              }
-
-              return (
-                <Button
-                  key={page}
-                  variant={currentPage === page ? "default" : "outline"}
-                  onClick={() => setCurrentPage(page as number)}
-                  className={currentPage === page ? "font-bold" : ""}
-                >
-                  {page}
-                </Button>
-              );
-            })}
-
-            <Button
-              variant="outline"
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-            >
-              Next &rarr;
-            </Button>
-          </div>
-          <div className="text-sm text-gray-500">
-            Page {currentPage} of {totalPages}
-          </div>
+      {listError && (
+        <div role="alert" className="mb-4 flex items-center gap-3 text-red-600">
+          <span>{listError}</span>
+          <Button variant="outline" size="sm" onClick={() => void fetchOrders()}>
+            Retry
+          </Button>
         </div>
       )}
 
-      {/* Order Details Modal */}
-      <Dialog
-        open={detailsOpen}
-        onOpenChange={setDetailsOpen}
-        title="Order Details"
-        onConfirm={openStatusDialog}
-        confirmText="Update Status"
-        cancelText="Close"
-        size="xl"
-      >
-        {selectedOrder && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Order Number</p>
-                <p className="font-mono">{selectedOrder.orderNumber || selectedOrder.id.slice(0, 8)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Date</p>
-                <p>{formatDate(selectedOrder.createdAt)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Customer</p>
-                <p>{getCustomerName(selectedOrder)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Email</p>
-                <p className="text-sm">{getCustomerEmail(selectedOrder)}</p>
-              </div>
-              {selectedOrder.trackingNumber && (
-                <div className="col-span-2">
-                  <p className="text-xs text-gray-500 uppercase">Tracking Number</p>
-                  <p className="font-mono">{selectedOrder.trackingNumber}</p>
-                </div>
-              )}
-            </div>
-
-            {selectedOrder.shippingAddress && (
-              <div>
-                <p className="text-xs text-gray-500 uppercase mb-2">Shipping Address</p>
-                <div className="text-sm space-y-1 bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
-                  <p className="font-medium">
-                    {selectedOrder.shippingAddress.firstName} {selectedOrder.shippingAddress.lastName}
-                  </p>
-                  <p>{selectedOrder.shippingAddress.street}</p>
-                  <p>
-                    {selectedOrder.shippingAddress.city}, {selectedOrder.shippingAddress.state} {selectedOrder.shippingAddress.postalCode}
-                  </p>
-                  <p>{selectedOrder.shippingAddress.country}</p>
-                  {selectedOrder.shippingAddress.phone && (
-                    <p className="text-gray-500">📞 {selectedOrder.shippingAddress.phone}</p>
-                  )}
-                  {selectedOrder.shippingAddress.email && (
-                    <p className="text-gray-500">✉️ {selectedOrder.shippingAddress.email}</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <p className="text-xs text-gray-500 uppercase mb-2">Items</p>
-              <div className="space-y-2">
-                {selectedOrder.items.map((item, i) => (
-                  <div key={i} className="flex justify-between text-sm">
-                    <span>{item.product.name} x{item.quantity}</span>
-                    <span>{formatPrice(Number(item.price) * item.quantity, selectedOrder.currency)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t pt-4">
-              <p className="text-xs text-gray-500 uppercase mb-2">Total</p>
-              <p className="text-2xl font-bold">{formatPrice(selectedOrder.total, selectedOrder.currency)}</p>
-            </div>
-          </div>
-        )}
-      </Dialog>
-
-      {/* Status Update Dialog */}
-      <Dialog
-        open={statusDialogOpen}
-        onOpenChange={setStatusDialogOpen}
-        title="Update Order Status"
-        onConfirm={handleStatusUpdate}
-        confirmText="Update"
-      >
-        <div className="space-y-4">
-          <Select
-            label="New Status"
-            options={selectedOrder?.status === "CANCELLED" && selectedOrder.reservationExpiredAt
-              ? [{ value: "PENDING", label: "Recover late payment: reserve stock again" }]
-              : nextStatuses[selectedOrder?.status || ""] || []}
-            value={newStatus}
-            onChange={(e) => setNewStatus(e.target.value)}
-            required
-          />
-
-          {selectedOrder?.status === "PENDING" && newStatus === "CONFIRMED" && (
-            <p className="text-sm text-amber-700">Confirm only after independently verifying the exact bank transfer. This action records you as the confirming administrator.</p>
-          )}
-          {selectedOrder?.reservationExpiredAt && newStatus === "PENDING" && (
-            <p className="text-sm text-amber-700">Recovery only re-reserves stock. After it succeeds, verify the late bank payment and confirm in a separate action.</p>
-          )}
-
-          <Input
-            label="Tracking Number"
-            value={trackingNumber}
-            onChange={(e) => setTrackingNumber(e.target.value)}
-            placeholder="Enter tracking number (optional)"
-          />
+      {loading && orders.length === 0 ? (
+        <div className="text-center py-12">Loading...</div>
+      ) : (
+        <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+          <OrdersTable orders={orders} onViewDetails={setSelectedOrder} />
         </div>
-      </Dialog>
+      )}
+
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} summary={`${total} orders`} />
+
+      <OrderDetailsModal
+        order={selectedOrder}
+        onClose={() => setSelectedOrder(null)}
+        onChanged={handleOrderChanged}
+      />
     </div>
   );
 }

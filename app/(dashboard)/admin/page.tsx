@@ -2,9 +2,31 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Package, ShoppingCart, Ticket, AlertTriangle, Eye } from "lucide-react";
+import { Package, ShoppingCart, Ticket, AlertTriangle, Eye, Clock } from "lucide-react";
 import { db } from "@/lib/db";
 import { formatPrice } from "@/lib/utils";
+import { getStoreSettings } from "@/lib/store-settings";
+
+// Lite orders always carry a reservation; this matches the admin order list.
+const LITE_ORDERS = { reservationExpiresAt: { not: null } };
+
+const STATUS_BADGES: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-800",
+  DELIVERED: "bg-green-100 text-green-700",
+  CANCELLED: "bg-red-100 text-red-700",
+  REFUNDED: "bg-gray-100 text-gray-700",
+  PARTIALLY_REFUNDED: "bg-gray-100 text-gray-700",
+};
+const ACTIVE_STATUS_BADGE = "bg-blue-100 text-blue-700";
+
+function customerName(order: {
+  user?: { name: string | null; email: string | null } | null;
+  guestEmail?: string | null;
+  shippingAddress?: { firstName: string; lastName: string } | null;
+}) {
+  const addressName = `${order.shippingAddress?.firstName ?? ""} ${order.shippingAddress?.lastName ?? ""}`.trim();
+  return order.user?.name?.trim() || addressName || order.user?.email || order.guestEmail || "Guest";
+}
 
 export default async function AdminDashboard() {
   const session = await auth();
@@ -13,8 +35,17 @@ export default async function AdminDashboard() {
     redirect("/");
   }
 
+  const settings = await getStoreSettings(db);
+  const storeCurrency = settings?.currency || "USD";
+
+  // Unpaid bank-transfer orders waiting for the admin to confirm payment
+  const awaitingPayment = await db.order.count({
+    where: { ...LITE_ORDERS, status: "PENDING" },
+  });
+
   // Fetch recent orders
   const recentOrders = await db.order.findMany({
+    where: LITE_ORDERS,
     take: 5,
     orderBy: {
       createdAt: "desc",
@@ -49,7 +80,7 @@ export default async function AdminDashboard() {
       <h1 className="text-3xl font-bold mb-8">Admin Dashboard</h1>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
         <Link href="/admin/products">
           <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6 hover:shadow-lg transition-shadow cursor-pointer">
             <div className="flex items-center justify-between mb-4">
@@ -70,6 +101,19 @@ export default async function AdminDashboard() {
             </div>
             <p className="text-gray-600 dark:text-gray-400">
               View and manage orders
+            </p>
+          </div>
+        </Link>
+
+        <Link href="/admin/orders">
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-6 hover:shadow-lg transition-shadow cursor-pointer">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Awaiting payment</h3>
+              <Clock className="w-8 h-8 text-amber-600" />
+            </div>
+            <p className="text-3xl font-bold" data-testid="awaiting-payment-count">{awaitingPayment}</p>
+            <p className="text-gray-600 dark:text-gray-400 text-sm mt-1">
+              Orders waiting for a bank transfer
             </p>
           </div>
         </Link>
@@ -115,16 +159,13 @@ export default async function AdminDashboard() {
                         {order.orderNumber || order.id.slice(0, 8)}
                       </td>
                       <td className="px-6 py-4 text-sm">
-                        {order.user?.name || `${order.shippingAddress?.firstName} ${order.shippingAddress?.lastName}` || "Guest"}
+                        {customerName(order)}
                       </td>
                       <td className="px-6 py-4 text-sm font-semibold">
-                        {formatPrice(Number(order.total), order.currency)}
+                        {formatPrice(Number(order.total), order.currency || storeCurrency)}
                       </td>
                       <td className="px-6 py-4 text-sm">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${order.status === "DELIVERED" ? "bg-green-100 text-green-700" :
-                            order.status === "CANCELLED" ? "bg-red-100 text-red-700" :
-                              "bg-blue-100 text-blue-700"
-                          }`}>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_BADGES[order.status] ?? ACTIVE_STATUS_BADGE}`}>
                           {order.status}
                         </span>
                       </td>

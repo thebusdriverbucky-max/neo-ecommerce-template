@@ -11,6 +11,7 @@ export default function ContactForm() {
     email: '',
     subject: '',
     message: '',
+    website: '', // honeypot, must stay empty
   });
   const [submitted, setSubmitted] = useState(false);
   const [sending, setSending] = useState(false);
@@ -38,8 +39,8 @@ export default function ContactForm() {
 
       if (response.ok) {
         setSubmitted(true);
-        setFormData({ name: '', email: '', subject: '', message: '' });
-        setTimeout(() => setSubmitted(false), 5000);
+        setFormData({ name: '', email: '', subject: '', message: '', website: '' });
+        setTimeout(() => setSubmitted(false), 8000);
       } else {
         setError('Could not send your message. Check the fields and try again shortly.');
       }
@@ -55,13 +56,25 @@ export default function ContactForm() {
       {submitted && (
         <div className="mb-6 p-4 bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-800 rounded-lg">
           <p className="text-green-800 dark:text-green-200">
-            ✓ Thank you for your message! We'll get back to you soon.
+            ✓ Thank you for your message! We'll reply to the email address you provided. No confirmation email is sent.
           </p>
         </div>
       )}
 
       {error && <p role="alert" className="text-red-600 mb-4">{error}</p>}
       <form onSubmit={handleSubmit} className="space-y-6">
+        <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+          <label htmlFor="contact-website">Leave this field empty</label>
+          <input
+            id="contact-website"
+            type="text"
+            name="website"
+            value={formData.website}
+            onChange={handleChange}
+            tabIndex={-1}
+            autoComplete="off"
+          />
+        </div>
         <Input
           label="Name"
           name="name"
@@ -99,6 +112,9 @@ export default function ContactForm() {
         <Button type="submit" className="w-full" disabled={sending}>
           {sending ? 'Sending...' : 'Send Message'}
         </Button>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          We will reply to the email address you enter above. You will not receive an automatic confirmation email.
+        </p>
       </form>
 
     </div>

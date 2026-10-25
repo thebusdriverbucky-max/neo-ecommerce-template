@@ -2,14 +2,14 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { addressSchema } from "@/lib/validations";
-import { Input } from "@/components/ui/Input";
 import CountrySelect from "@/components/ui/CountrySelect";
 import { useSettings } from "@/components/providers/settings-provider";
-import { COUNTRIES } from "@/lib/constants";
+import { isCountryEnabled, toCountryCode } from "@/lib/shipping";
+import { sanitizeCountryValue } from "@/lib/country-options";
 import { z } from "zod";
 
 interface CheckoutFormProps {
@@ -17,13 +17,15 @@ interface CheckoutFormProps {
   loading: boolean;
 }
 
+type AddressFormValues = z.input<typeof addressSchema>;
+
 const COUNTRIES_WITH_REQUIRED_STATE = ['US', 'CA', 'AU', 'IN'];
 
 export function CheckoutForm({ onSubmit, loading }: CheckoutFormProps) {
   const { settings } = useSettings();
   const enabledCountries = settings?.enabledCountries || [];
 
-  const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm({
+  const { register, handleSubmit, watch, setValue, setError, reset, formState: { errors } } = useForm<AddressFormValues>({
     resolver: zodResolver(addressSchema),
   });
 
@@ -33,12 +35,18 @@ export function CheckoutForm({ onSubmit, loading }: CheckoutFormProps) {
     if (savedData) {
       try {
         const parsedData = JSON.parse(savedData);
-        reset(parsedData);
+        // The store may have stopped shipping to the saved country since then.
+        reset({ ...parsedData, country: sanitizeCountryValue(parsedData?.country, enabledCountries) });
       } catch (e) {
         console.error("Failed to parse saved checkout data", e);
       }
     }
+    // Only the initial restore: later settings changes are handled by CountrySelect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reset]);
+
+  // CountrySelect is not a native input, so the field is registered by hand.
+  useEffect(() => { register("country"); }, [register]);
 
   // Watch all form changes and save to localStorage
   const formData = watch();
@@ -51,8 +59,12 @@ export function CheckoutForm({ onSubmit, loading }: CheckoutFormProps) {
   const countryValue = watch("country");
 
   const onFormSubmit = (data: any) => {
+    if (!isCountryEnabled(data.country, enabledCountries)) {
+      setError("country", { type: "validate", message: "We do not ship to this country" });
+      return;
+    }
     localStorage.removeItem("checkout-form-data");
-    onSubmit({ shippingAddress: data });
+    onSubmit({ shippingAddress: { ...data, country: toCountryCode(data.country) } });
   };
 
   return (
@@ -124,8 +136,11 @@ export function CheckoutForm({ onSubmit, loading }: CheckoutFormProps) {
             <div>
               <CountrySelect
                 label="Country"
-                value={countryValue}
-                onChange={(value) => setValue("country", value, { shouldValidate: true })}
+                value={countryValue ?? ""}
+                onChange={(value) => setValue("country", value, {
+                  // Stay quiet while the first letters are typed; flag a cleared pick.
+                  shouldValidate: value !== "" || Boolean(countryValue) || Boolean(errors.country),
+                })}
                 enabledCountries={enabledCountries}
                 required
               />

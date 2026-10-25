@@ -15,22 +15,22 @@ export function CTA({
 }: CTAProps) {
   return (
     <section className="relative bg-blue-600 dark:bg-blue-900 text-white pt-24 pb-0 overflow-hidden">
-      {/* --- Геометрический фон --- */}
+      {/* --- Geometric background --- */}
 
-      {/* Большой круг слева сверху */}
+      {/* Large circle, top left */}
       <div className="absolute -top-24 -left-24 w-96 h-96 bg-white/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Четкий круг справа снизу */}
+      {/* Sharp circle, bottom right */}
       <div className="absolute bottom-32 -right-12 w-80 h-80 border-[40px] border-white/5 rounded-full pointer-events-none" />
 
-      {/* Повернутый квадрат по центру */}
+      {/* Rotated square, centered */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] border border-white/10 rotate-45 rounded-[3rem] pointer-events-none" />
 
-      {/* Маленькие декоративные элементы */}
+      {/* Small decorative elements */}
       <div className="absolute top-20 right-20 w-4 h-4 bg-white/30 rounded-full pointer-events-none" />
       <div className="absolute bottom-40 left-20 w-6 h-6 bg-white/20 rotate-45 rounded pointer-events-none" />
 
-      {/* --- Контент --- */}
+      {/* --- Content --- */}
       <div className="relative container mx-auto px-4 text-center z-10 pb-32">
         <h2 className="text-4xl font-bold mb-6 tracking-tight">
           {title}
@@ -46,9 +46,9 @@ export function CTA({
         </Link>
       </div>
 
-      {/* --- Адаптивная волна --- */}
+      {/* --- Responsive wave --- */}
       <div className="absolute bottom-0 left-0 w-full overflow-hidden leading-none">
-        {/* Мобильная версия: простая волна БЕЗ переворота */}
+        {/* Mobile: simple wave, not flipped */}
         <svg
           className="relative block w-full h-[80px] md:hidden"
           xmlns="http://www.w3.org/2000/svg"
@@ -61,7 +61,7 @@ export function CTA({
           />
         </svg>
 
-        {/* Десктоп версия: красивая волнистая С переворотом */}
+        {/* Desktop: curved wave, flipped */}
         <svg
           className="hidden md:block relative w-full h-[120px] scale-y-[-1]"
           xmlns="http://www.w3.org/2000/svg"
